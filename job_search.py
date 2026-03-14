@@ -48,6 +48,9 @@ def _fetch_search_results():
         '"product manager" vancouver',
         '"program manager" vancouver',
         '"project manager" vancouver',
+        '"product manager" remote canada',
+        '"program manager" remote canada',
+        '"project manager" remote canada',
     ]
 
     print("  Google Custom Search API로 검색 중...")
@@ -183,6 +186,14 @@ def _is_list_page(url, title, snippet):
     if any(kw in snippet_lower for kw in ["view all", "see more", "browse all"]):
         return True
 
+    # Workday 비영어 페이지 제외 — locale 경로가 있으면 en-US/en만 허용
+    if "myworkdayjobs.com" in url_lower:
+        locale_match = re.search(r"/([a-z]{2}(?:[-_][A-Z]{2})?)/", url)
+        if locale_match:
+            locale = locale_match.group(1).lower()
+            if not locale.startswith("en"):
+                return True
+
     return False
 
 
@@ -210,8 +221,17 @@ def _enrich_with_details(items):
 
     for item in items:
         url = _clean_job_url(item["link"])  # JD 본문 페이지로 정리
+        # Google 검색 결과 title 정리
+        google_title = item.get("title", "")
+        # 사이트명 제거 (예: "... - Myworkdayjobs.com", "... - Greenhouse")
+        google_title = re.sub(r"\s*[-–|].*\.(com|ca|co|io|org).*$", "", google_title)
+        google_title = re.sub(r"\s*[-–|]\s*(Greenhouse|TELUS Jobs|Jobs|Career Opportunities).*$", "", google_title, flags=re.I)
+        # Greenhouse 패턴: "Job Application for {직무} at {회사}" → 직무만 추출
+        google_title = re.sub(r"^Job Application for\s+", "", google_title, flags=re.I)
+        google_title = re.sub(r"\s+at\s+\S+$", "", google_title)
+
         job = {
-            "title": item.get("title", ""),
+            "title": google_title.strip(),
             "company": _extract_company_from_url(url),
             "location": "",
             "salary": "",
@@ -227,9 +247,6 @@ def _enrich_with_details(items):
             page_text = details.pop("_page_text", "")
             for key in ["title", "company", "location", "salary", "employment_type", "date_posted"]:
                 if details.get(key):
-                    # title은 Google 검색 결과가 더 나을 수 있으므로 빈 값만 채움
-                    if key == "title" and job[key]:
-                        continue
                     job[key] = details[key]
 
         # 게시일 기준 필터링: 7일 이내만 (날짜 정보 없으면 유지)

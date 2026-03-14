@@ -20,7 +20,7 @@ from googleapiclient.discovery import build
 SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
 # 수신자 이메일
-TO_EMAIL = "REDACTED"
+TO_EMAIL = ["REDACTED", "REDACTED"]
 
 # 인증 파일 경로 (이 스크립트와 같은 폴더에 위치)
 CREDENTIALS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "credentials.json")
@@ -86,7 +86,7 @@ def build_email_body(jobs):
             html += f'<p style="margin: 4px 0;">Company: {job["company"]}</p>'
 
         if job.get("location"):
-            html += f'<p style="margin: 4px 0;">Location: {job["location"]}</p>'
+            html += f'<p style="margin: 4px 0;">Location: {_simplify_location(job["location"])}</p>'
 
         if job.get("salary"):
             html += f'<p style="margin: 4px 0;">Salary: {job["salary"]}</p>'
@@ -125,6 +125,40 @@ def build_email_body(jobs):
     return html
 
 
+VANCOUVER_METRO_CITIES = [
+    "vancouver", "north vancouver", "west vancouver", "burnaby",
+    "richmond", "surrey", "new westminster", "coquitlam",
+    "port coquitlam", "port moody", "delta", "langley",
+    "maple ridge", "pitt meadows", "white rock",
+]
+
+
+def _simplify_location(location):
+    """위치를 간소화: 밴쿠버 광역 도시명 또는 Remote만 표시"""
+    if not location:
+        return ""
+    loc_lower = location.lower()
+
+    # Remote 여부
+    is_remote = "remote" in loc_lower or "flexible" in loc_lower
+
+    # 밴쿠버 광역 도시 찾기
+    found_city = None
+    for city in VANCOUVER_METRO_CITIES:
+        if city in loc_lower:
+            found_city = city.title()
+            break
+
+    if is_remote and found_city:
+        return f"{found_city} (Remote)"
+    elif is_remote:
+        return "Remote, Canada"
+    elif found_city:
+        return found_city
+    else:
+        return location
+
+
 def _format_days_ago(date_posted):
     """날짜 문자열(YYYY-MM-DD)을 'today', '1 day ago', '3 days ago' 등으로 변환"""
     if not date_posted:
@@ -150,7 +184,7 @@ def send_email(subject, html_body):
 
     # HTML 이메일 메시지 생성
     message = MIMEMultipart("alternative")
-    message["to"] = TO_EMAIL
+    message["to"] = ", ".join(TO_EMAIL) if isinstance(TO_EMAIL, list) else TO_EMAIL
     message["subject"] = subject
 
     html_part = MIMEText(html_body, "html")
