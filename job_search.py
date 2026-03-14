@@ -388,12 +388,12 @@ def _extract_company_from_url(url):
     # 예: amazon.jobs → Amazon, careers.microsoft.com → Microsoft
     try:
         domain = urlparse(url).netloc.lower()
-        # jobs/careers 서브도메인 패턴: careers.회사.com, jobs.회사.com
-        m = re.match(r"(?:careers|jobs|job)\.([^.]+)\.", domain)
+        # jobs/careers 서브도메인 패턴: careers.회사.com, jobs.회사.com, www.careers.회사.com
+        m = re.match(r"(?:www\.)?(?:careers|jobs|job)\.([^.]+)\.", domain)
         if m:
             return m.group(1).replace("-", " ").title()
-        # 회사.jobs 패턴: amazon.jobs
-        m = re.match(r"([^.]+)\.jobs$", domain)
+        # 회사.jobs 패턴: amazon.jobs, www.amazon.jobs
+        m = re.match(r"(?:www\.)?([^.]+)\.jobs$", domain)
         if m:
             return m.group(1).replace("-", " ").title()
     except Exception:
