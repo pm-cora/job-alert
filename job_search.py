@@ -251,6 +251,9 @@ def _enrich_with_details(items):
 
         jobs.append(job)
 
+    # 최신순 정렬 (date_posted 있는 것 먼저, 없는 것은 뒤로)
+    jobs.sort(key=lambda j: j.get("date_posted") or "0000-00-00", reverse=True)
+
     print(f"  날짜+위치 필터 후: {len(jobs)}건")
     return jobs
 
