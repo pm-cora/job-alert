@@ -227,6 +227,9 @@ def _enrich_with_details(items):
             page_text = details.pop("_page_text", "")
             for key in ["title", "company", "location", "salary", "employment_type", "date_posted"]:
                 if details.get(key):
+                    # title은 Google 검색 결과가 더 나을 수 있으므로 빈 값만 채움
+                    if key == "title" and job[key]:
+                        continue
                     job[key] = details[key]
 
         # 게시일 기준 필터링: 7일 이내만 (날짜 정보 없으면 유지)
@@ -325,7 +328,7 @@ def _passes_location_filter(location):
 
     loc_lower = location.lower()
 
-    is_remote = "remote" in loc_lower
+    is_remote = "remote" in loc_lower or "flexible" in loc_lower
 
     if is_remote:
         # Remote인 경우: Canada여야 함
