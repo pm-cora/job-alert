@@ -184,7 +184,7 @@ def send_email(subject, html_body):
 
     # HTML 이메일 메시지 생성
     message = MIMEMultipart("alternative")
-    message["to"] = ", ".join(TO_EMAIL) if isinstance(TO_EMAIL, list) else TO_EMAIL
+    message["bcc"] = ", ".join(TO_EMAIL) if isinstance(TO_EMAIL, list) else TO_EMAIL
     message["subject"] = subject
 
     html_part = MIMEText(html_body, "html")
