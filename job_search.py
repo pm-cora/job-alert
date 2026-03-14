@@ -81,7 +81,7 @@ def _fetch_search_results():
 
                 # 쿼리 간 중복 제거 (URL 정규화)
                 for item in items:
-                    normalized = _normalize_url(item["link"])
+                    normalized = _clean_job_url(item["link"])
                     if normalized not in seen_urls:
                         seen_urls.add(normalized)
                         all_items.append(item)
@@ -96,14 +96,6 @@ def _fetch_search_results():
 
     print(f"  검색 결과: {len(all_items)}건 (중복 제거 후)")
     return all_items
-
-
-def _normalize_url(url):
-    """
-    URL 정규화 — 같은 공고의 다른 URL 변형을 하나로 통합
-    예: /apply, /applyManually, ?utm_source=... 등 제거
-    """
-    return _clean_job_url(url)
 
 
 def _clean_job_url(url):
