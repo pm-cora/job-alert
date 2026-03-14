@@ -111,16 +111,12 @@ def build_email_body(jobs):
         </div>
         """
 
-    # 소스 목록 생성 (중복 제거, 정렬)
-    sources = sorted(set(job.get("source", "") for job in jobs if job.get("source")))
-    sources_text = ", ".join(sources) if sources else ""
-
-    html += f"""
+    html += """
         <hr style="border: 1px solid #eee;">
-        <p style="color: #999; font-size: 12px;">
+        <p style="color: #bbb; font-size: 11px;">
             Search: "Product/Program/Project Manager" in Vancouver, Canada<br>
-            Sources: {sources_text}<br>
-            <em>"X days ago" = actual posting date from the job page (not Google search date)</em>
+            Sources: Greenhouse, Lever, Workday, SmartRecruiters, Ashby + 10 sites<br>
+            "X days ago" = actual posting date from the job page
         </p>
     </body>
     </html>

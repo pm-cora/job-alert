@@ -218,7 +218,6 @@ def _enrich_with_details(items):
             "employment_type": "",
             "date_posted": "",
             "url": url,
-            "source": urlparse(url).netloc,
         }
 
         # 개별 채용 페이지에서 JSON-LD 상세 정보 추출 시도
