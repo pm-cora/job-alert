@@ -2,11 +2,8 @@ name: Daily PM Job Alert
 
 on:
   schedule:
-    # 매일 새벽 1시 밴쿠버 시간 (PDT=UTC-7)
-    # PDT 기준: 1AM = 8AM UTC
-    # PST(겨울) 기준: 1AM = 9AM UTC → 이때는 새벽 2시에 실행됨
     - cron: '0 9 * * *'
-  workflow_dispatch: # 수동 실행도 가능 (GitHub에서 "Run workflow" 버튼)
+  workflow_dispatch:
 
 jobs:
   send-job-alert:
@@ -23,7 +20,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # GitHub Secrets에 저장된 인증 파일을 복원
       - name: Set up credentials
         run: |
           echo '${{ secrets.GMAIL_CREDENTIALS }}' > credentials.json
