@@ -68,7 +68,7 @@ def build_email_body(jobs):
     html = f"""
     <html>
     <body style="font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; color: #333;">
-        <h2 style="color: #2c3e50;">Vancouver PM Job Alert — {today}</h2>
+        <h2 style="color: #2c3e50;">Caroline's Job Alert — {today}</h2>
         <p style="color: #666;">
             Total <strong>{len(jobs)}</strong> new postings found (past 7 days)
         </p>
@@ -94,10 +94,7 @@ def build_email_body(jobs):
         if job.get("employment_type"):
             html += f'<p style="margin: 4px 0;">Type: {job["employment_type"]}</p>'
 
-        # 포스팅 날짜를 "today", "1 day ago", "3 days ago" 등으로 표시
         posted_label = _format_days_ago(job.get("date_posted", ""))
-        if posted_label:
-            html += f'<p style="margin: 4px 0; color: #888; font-size: 13px;">Posted: {posted_label}</p>'
 
         html += f"""
             <a href="{job['url']}" style="display: inline-block; margin-top: 12px; padding: 8px 20px;
@@ -105,17 +102,25 @@ def build_email_body(jobs):
                border-radius: 5px; font-size: 14px; font-weight: bold;">
                 View posting
             </a>
-            <span style="margin-left: 12px; color: #ccc; font-size: 11px;">
-                {job.get('source', '')}
-            </span>
+        """
+
+        if posted_label:
+            html += f'<span style="margin-left: 12px; color: #999; font-size: 12px;">{posted_label}</span>'
+
+        html += """
         </div>
         """
 
-    html += """
+    # 소스 목록 생성 (중복 제거, 정렬)
+    sources = sorted(set(job.get("source", "") for job in jobs if job.get("source")))
+    sources_text = ", ".join(sources) if sources else ""
+
+    html += f"""
         <hr style="border: 1px solid #eee;">
         <p style="color: #999; font-size: 12px;">
-            Search: "Product Manager" + Vancouver<br>
-            Sources: SmartRecruiters, Lever, Greenhouse + 12 ATS platforms
+            Search: "Product/Program/Project Manager" in Vancouver, Canada<br>
+            Sources: {sources_text}<br>
+            <em>"X days ago" = actual posting date from the job page (not Google search date)</em>
         </p>
     </body>
     </html>

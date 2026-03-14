@@ -203,7 +203,7 @@ def _enrich_with_details(items):
     위치 조건 필터링:
     - Remote: Canada 어디든 OK
     - On-site/Hybrid: Vancouver 광역권이어야 함
-    - 위치 정보 없음: 유지 (검색어에 vancouver 포함이므로)
+    - 위치 정보 없음: 페이지 본문에서 밴쿠버/캐나다 근무지 여부 확인
     """
     jobs = []
     seen_titles = set()  # 제목+회사 기준 중복 제거
@@ -223,7 +223,9 @@ def _enrich_with_details(items):
 
         # 개별 채용 페이지에서 JSON-LD 상세 정보 추출 시도
         details = _extract_job_details(url)
+        page_text = ""
         if details:
+            page_text = details.pop("_page_text", "")
             for key in ["title", "company", "location", "salary", "employment_type", "date_posted"]:
                 if details.get(key):
                     job[key] = details[key]
@@ -233,8 +235,14 @@ def _enrich_with_details(items):
             continue
 
         # 위치 조건 필터링
-        if not _passes_location_filter(job["location"]):
-            continue
+        if job["location"]:
+            # 위치 정보가 있으면 기존 필터 적용
+            if not _passes_location_filter(job["location"]):
+                continue
+        else:
+            # 위치 정보가 없으면 페이지 본문에서 밴쿠버/캐나다 근무지 여부 확인
+            if not _verify_location_from_text(page_text):
+                continue
 
         # 제목+회사 기준 중복 제거
         dedup_key = (job["title"].lower().strip(), job["company"].lower().strip())
@@ -279,6 +287,28 @@ def _passes_date_filter(date_posted, max_days=7):
         return (today - posted).days <= max_days
     except (ValueError, TypeError):
         return True
+
+
+def _verify_location_from_text(page_text):
+    """
+    위치 정보가 없는 공고의 페이지 본문에서 밴쿠버/캐나다 근무지 여부 확인
+    - "vancouver" 포함 → 통과
+    - "canada"만 있고 "remote" 포함 → 통과 (Remote Canada)
+    - 둘 다 없음 → 제외
+    """
+    if not page_text:
+        return False
+
+    # "vancouver"가 있으면 Canada/BC인지 확인 (미국 Vancouver, WA 제외)
+    if "vancouver" in page_text:
+        if "canada" in page_text or "british columbia" in page_text or re.search(r'\bbc\b', page_text):
+            return True
+
+    # "canada"만 있고 "remote" 포함 → Remote Canada
+    if "canada" in page_text and "remote" in page_text:
+        return True
+
+    return False
 
 
 def _passes_location_filter(location):
@@ -352,13 +382,30 @@ def _extract_company_from_url(url):
     except Exception:
         pass
 
+    # Fallback: 도메인에서 회사명 추출
+    # 예: amazon.jobs → Amazon, careers.microsoft.com → Microsoft
+    try:
+        domain = urlparse(url).netloc.lower()
+        # jobs/careers 서브도메인 패턴: careers.회사.com, jobs.회사.com
+        m = re.match(r"(?:careers|jobs|job)\.([^.]+)\.", domain)
+        if m:
+            return m.group(1).replace("-", " ").title()
+        # 회사.jobs 패턴: amazon.jobs
+        m = re.match(r"([^.]+)\.jobs$", domain)
+        if m:
+            return m.group(1).replace("-", " ").title()
+    except Exception:
+        pass
+
     return ""
 
 
 def _extract_job_details(url):
     """
     개별 채용 페이지에서 상세 정보 추출
-    JSON-LD 구조화 데이터(schema.org/JobPosting)를 찾아서 파싱합니다
+    1차: JSON-LD 구조화 데이터(schema.org/JobPosting)
+    2차: HTML microdata (property 속성) — Job Bank 등
+    3차: HTML class에서 위치 힌트 추출
     """
     try:
         response = requests.get(url, timeout=10, headers=HEADERS)
@@ -401,10 +448,118 @@ def _extract_job_details(url):
                 }
             except (json.JSONDecodeError, AttributeError, TypeError):
                 continue
+
+        # JSON-LD 없는 경우: microdata(property 속성)에서 추출 시도
+        microdata = _extract_from_microdata(soup)
+        if microdata:
+            microdata["_page_text"] = soup.get_text(separator=" ", strip=True).lower()
+            return microdata
+
+        # microdata도 없는 경우: HTML class에서 위치 힌트만 추출
+        location_hint = _extract_location_from_html(soup)
+        page_text = soup.get_text(separator=" ", strip=True).lower()
+        return {"location": location_hint, "_page_text": page_text}
+
     except Exception:
         pass
 
     return None
+
+
+def _extract_from_microdata(soup):
+    """
+    HTML microdata (property 속성)에서 채용 정보 추출
+    Job Bank 등 JSON-LD 대신 microdata를 사용하는 사이트용
+    """
+    def _get_prop(name):
+        el = soup.find(attrs={"property": name})
+        if el:
+            return el.get_text(strip=True)
+        return ""
+
+    # title이 있어야 채용 페이지로 판단
+    title = _get_prop("title")
+    if not title:
+        return None
+
+    # 위치: addressLocality + addressRegion
+    locality = _get_prop("addressLocality")
+    region = _get_prop("addressRegion")
+    location_parts = [p for p in [locality, region] if p]
+    location = ", ".join(location_parts)
+
+    # 회사명: hiringOrganization 하위의 name
+    company = ""
+    org_el = soup.find(attrs={"property": "hiringOrganization"})
+    if org_el:
+        name_el = org_el.find(attrs={"property": "name"})
+        if name_el:
+            company = name_el.get_text(strip=True)
+
+    # 급여: minValue, maxValue, unitText
+    salary = ""
+    min_val = _get_prop("minValue")
+    max_val = _get_prop("maxValue")
+    unit = _get_prop("unitText")
+    if min_val and max_val:
+        unit_label = {"HOUR": "/hr", "YEAR": "/yr", "MONTH": "/mo"}.get(unit.upper(), "")
+        salary = f"${min_val}–${max_val}{unit_label}"
+
+    # 고용형태 (Job Bank: "Permanent employmentFull time" → 정리)
+    emp_type = _get_prop("employmentType")
+    emp_type = emp_type.replace("employment", "employment, ")
+
+    # 게시일
+    date_posted = _get_prop("datePosted")
+    # Job Bank 형식: "Posted on March 10, 2026" → 날짜만 추출
+    date_match = re.search(r"(\d{4}-\d{2}-\d{2})", date_posted)
+    if not date_match:
+        # "March 10, 2026" 형식 파싱
+        date_match = re.search(r"([A-Z][a-z]+ \d{1,2},?\s*\d{4})", date_posted)
+        if date_match:
+            try:
+                from datetime import datetime as dt
+                parsed = dt.strptime(date_match.group(1).replace(",", ""), "%B %d %Y")
+                date_posted = parsed.strftime("%Y-%m-%d")
+            except ValueError:
+                date_posted = ""
+        else:
+            date_posted = ""
+    else:
+        date_posted = date_match.group(1)
+
+    return {
+        "title": title,
+        "company": company,
+        "location": location,
+        "salary": salary,
+        "employment_type": emp_type,
+        "date_posted": date_posted,
+    }
+
+
+def _extract_location_from_html(soup):
+    """
+    JSON-LD가 없는 페이지에서 위치 정보를 추출
+    일반적인 ATS 페이지의 위치 표시 패턴을 찾습니다
+    """
+    # class/id에 "location" 포함된 요소에서 도시, 주, 국가 형태의 텍스트 찾기
+    candidates = []
+    for el in soup.find_all(attrs={"class": re.compile(r"location", re.I)}):
+        text = el.get_text(strip=True)
+        if text and 5 < len(text) < 200:
+            candidates.append(text)
+
+    for el in soup.find_all(attrs={"id": re.compile(r"location", re.I)}):
+        text = el.get_text(strip=True)
+        if text and 5 < len(text) < 200:
+            candidates.append(text)
+
+    # 가장 구체적인 위치 텍스트 반환 (쉼표가 있으면 "도시, 주, 국가" 형태일 가능성 높음)
+    for c in candidates:
+        if "," in c:
+            return c
+    return candidates[0] if candidates else ""
 
 
 def _parse_company(data):
