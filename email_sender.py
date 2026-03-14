@@ -6,9 +6,10 @@ Gmail API를 사용하여 채용공고 알림 이메일을 발송하는 모듈
 
 import os
 import base64
-from datetime import datetime
+from datetime import datetime, date
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from zoneinfo import ZoneInfo
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -62,7 +63,7 @@ def get_gmail_service():
 
 def build_email_body(jobs):
     """채용공고 목록을 이메일 HTML 본문으로 변환"""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(ZoneInfo("America/Vancouver")).strftime("%Y-%m-%d")
 
     html = f"""
     <html>
@@ -93,6 +94,11 @@ def build_email_body(jobs):
         if job.get("employment_type"):
             html += f'<p style="margin: 4px 0;">Type: {job["employment_type"]}</p>'
 
+        # 포스팅 날짜를 "today", "1 day ago", "3 days ago" 등으로 표시
+        posted_label = _format_days_ago(job.get("date_posted", ""))
+        if posted_label:
+            html += f'<p style="margin: 4px 0; color: #888; font-size: 13px;">Posted: {posted_label}</p>'
+
         html += f"""
             <a href="{job['url']}" style="display: inline-block; margin-top: 12px; padding: 8px 20px;
                background-color: #3498db; color: #ffffff; text-decoration: none;
@@ -116,6 +122,25 @@ def build_email_body(jobs):
     """
 
     return html
+
+
+def _format_days_ago(date_posted):
+    """날짜 문자열(YYYY-MM-DD)을 'today', '1 day ago', '3 days ago' 등으로 변환"""
+    if not date_posted:
+        return ""
+    try:
+        posted = date.fromisoformat(date_posted[:10])
+        today = datetime.now(ZoneInfo("America/Vancouver")).date()
+        diff = (today - posted).days
+        if diff == 0:
+            return "today"
+        elif diff == 1:
+            return "1 day ago"
+        elif diff > 1:
+            return f"{diff} days ago"
+    except (ValueError, TypeError):
+        pass
+    return ""
 
 
 def send_email(subject, html_body):

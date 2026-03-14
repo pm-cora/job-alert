@@ -9,7 +9,9 @@ import json
 import os
 import re
 import requests
+from datetime import datetime, date
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 
 # Google Custom Search API 설정
@@ -222,6 +224,7 @@ def _enrich_with_details(items):
             "location": "",
             "salary": "",
             "employment_type": "",
+            "date_posted": "",
             "url": url,
             "source": urlparse(url).netloc,
         }
@@ -229,9 +232,13 @@ def _enrich_with_details(items):
         # 개별 채용 페이지에서 JSON-LD 상세 정보 추출 시도
         details = _extract_job_details(url)
         if details:
-            for key in ["title", "company", "location", "salary", "employment_type"]:
+            for key in ["title", "company", "location", "salary", "employment_type", "date_posted"]:
                 if details.get(key):
                     job[key] = details[key]
+
+        # 게시일 기준 필터링: 7일 이내만 (날짜 정보 없으면 유지)
+        if not _passes_date_filter(job["date_posted"]):
+            continue
 
         # 위치 조건 필터링
         if not _passes_location_filter(job["location"]):
@@ -245,7 +252,7 @@ def _enrich_with_details(items):
 
         jobs.append(job)
 
-    print(f"  위치 필터 후: {len(jobs)}건")
+    print(f"  날짜+위치 필터 후: {len(jobs)}건")
     return jobs
 
 
@@ -264,6 +271,22 @@ CANADA_PROVINCES = [
     "saskatchewan", "nova scotia", "new brunswick", "newfoundland",
     "prince edward island", "yukon", "northwest territories", "nunavut",
 ]
+
+
+def _passes_date_filter(date_posted, max_days=7):
+    """
+    게시일 기준 필터:
+    - datePosted가 있으면 7일 이내만 통과
+    - datePosted가 없으면 통과 (benefit of the doubt)
+    """
+    if not date_posted:
+        return True
+    try:
+        posted = date.fromisoformat(date_posted[:10])
+        today = datetime.now(ZoneInfo("America/Vancouver")).date()
+        return (today - posted).days <= max_days
+    except (ValueError, TypeError):
+        return True
 
 
 def _passes_location_filter(location):
@@ -382,6 +405,7 @@ def _extract_job_details(url):
                     "employment_type": _parse_employment_type(
                         data.get("employmentType", "")
                     ),
+                    "date_posted": data.get("datePosted", ""),
                 }
             except (json.JSONDecodeError, AttributeError, TypeError):
                 continue
