@@ -1,0 +1,477 @@
+"""
+ATS 도메인에서 Vancouver Product Manager 채용공고를 검색하는 모듈
+- Google Custom Search API로 ATS 사이트의 공고를 찾고
+- 리스트 페이지/관련 없는 결과를 필터링하고
+- 개별 페이지의 구조화 데이터(JSON-LD)에서 상세 정보를 추출합니다
+"""
+
+import json
+import os
+import re
+import requests
+from urllib.parse import urlparse
+from bs4 import BeautifulSoup
+
+# Google Custom Search API 설정
+API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+SEARCH_ENGINE_ID = os.environ.get("SEARCH_ENGINE_ID", "")
+
+# 웹 요청 시 사용할 브라우저 헤더 (차단 방지)
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+
+
+def search_all_jobs():
+    """
+    Google Custom Search API로 Product Manager 공고 검색
+    1. API로 검색 결과 수집
+    2. 리스트 페이지, 관련 없는 공고 필터링
+    3. 중복 제거
+    4. 개별 페이지에서 상세 정보 추출
+    """
+    raw_results = _fetch_search_results()
+    filtered = _filter_results(raw_results)
+    jobs = _enrich_with_details(filtered)
+    return jobs
+
+
+def _fetch_search_results():
+    """Google Custom Search API에서 검색 결과 가져오기"""
+    all_items = []
+    seen_urls = set()
+
+    # 3가지 직무를 각각 정확한 구문으로 검색
+    queries = [
+        '"product manager" vancouver',
+        '"program manager" vancouver',
+        '"project manager" vancouver',
+    ]
+
+    print("  Google Custom Search API로 검색 중...")
+
+    for query in queries:
+        print(f"    검색: {query}")
+        for start in range(1, 31, 10):  # 쿼리당 최대 30개 (3페이지)
+            try:
+                params = {
+                    "key": API_KEY,
+                    "cx": SEARCH_ENGINE_ID,
+                    "q": query,
+                    "start": start,
+                    "dateRestrict": "w1",  # 최근 1주일 내 결과만
+                }
+
+                response = requests.get(
+                    "https://www.googleapis.com/customsearch/v1",
+                    params=params,
+                    timeout=15,
+                )
+                data = response.json()
+
+                if "error" in data:
+                    print(f"  API 에러: {data['error']['message']}")
+                    break
+
+                items = data.get("items", [])
+                if not items:
+                    break
+
+                # 쿼리 간 중복 제거 (URL 정규화)
+                for item in items:
+                    normalized = _normalize_url(item["link"])
+                    if normalized not in seen_urls:
+                        seen_urls.add(normalized)
+                        all_items.append(item)
+
+                total = int(data.get("searchInformation", {}).get("totalResults", 0))
+                if start + 10 > total:
+                    break
+
+            except Exception as e:
+                print(f"  검색 실패 (start={start}): {e}")
+                break
+
+    print(f"  검색 결과: {len(all_items)}건 (중복 제거 후)")
+    return all_items
+
+
+def _normalize_url(url):
+    """
+    URL 정규화 — 같은 공고의 다른 URL 변형을 하나로 통합
+    예: /apply, /applyManually, ?utm_source=... 등 제거
+    """
+    return _clean_job_url(url)
+
+
+def _clean_job_url(url):
+    """
+    URL을 JD(채용공고 본문) 페이지로 정리
+    - /apply, /applyManually 등 지원 프로세스 경로 제거
+    - 불필요한 쿼리 파라미터 제거
+    """
+    # 쿼리 파라미터 제거
+    url = url.split("?")[0]
+    # Workday: /apply, /applyManually 등 제거
+    url = re.sub(r"/apply(/applyManually)?/?$", "", url)
+    # Ashby/Greenhouse: /application 제거
+    url = re.sub(r"/application/?$", "", url)
+    # 끝의 슬래시 제거
+    url = url.rstrip("/")
+    return url
+
+
+def _filter_results(items):
+    """
+    검색 결과에서 노이즈 제거:
+    - 리스트/회사 페이지 제외 (개별 공고만 남김)
+    - Product Manager와 관련 없는 직무 제외
+    - URL 기준 중복 제거
+    """
+    filtered = []
+
+    for item in items:
+        url = item["link"]
+        title = item.get("title", "")
+        snippet = item.get("snippet", "")
+
+        # 리스트 페이지 제외 (개별 공고가 아닌 페이지)
+        if _is_list_page(url, title, snippet):
+            continue
+
+        # Product Manager와 관련 없는 직무 제외
+        if not _is_pm_related(title):
+            continue
+
+        filtered.append(item)
+
+    print(f"  필터링 후: {len(filtered)}건")
+    return filtered
+
+
+def _is_list_page(url, title, snippet):
+    """
+    리스트/회사 페이지인지 판별
+    (이전 auto-job-search 프로젝트의 isListPage 로직 기반)
+    """
+    url_lower = url.lower()
+    title_lower = title.lower()
+    snippet_lower = snippet.lower()
+
+    # URL 패턴: 회사 채용 목록 페이지
+    list_patterns = [
+        r"/jobs\?",        # /jobs?source=...
+        r"/careers\?",     # /careers?source=...
+        r"/jobs/?$",       # /jobs 또는 /jobs/ (끝)
+        r"/careers/?$",    # /careers 또는 /careers/ (끝)
+    ]
+    if any(re.search(p, url_lower) for p in list_patterns):
+        return True
+
+    # 제목: 목록 페이지 키워드
+    list_titles = [
+        "all jobs", "open positions", "careers", "job board",
+        "current openings", "jobs at", "explore current opportunities",
+        "insights and opportunities",
+    ]
+    if any(kw in title_lower for kw in list_titles):
+        return True
+
+    # Wellfound 회사/펀딩/역할 페이지
+    if "wellfound.com" in url_lower:
+        if "/role/" in url_lower or "/funding" in url_lower:
+            return True
+        # /company/xxx 또는 /company/xxx/jobs (개별 공고 ID 없음)
+        if re.search(r"wellfound\.com/company/[^/]+(/(jobs)?)?$", url_lower):
+            return True
+
+    # 스니펫: 여러 직무가 나열된 경우
+    if any(kw in snippet_lower for kw in ["view all", "see more", "browse all"]):
+        return True
+
+    return False
+
+
+def _is_pm_related(title):
+    """Product/Program/Project Manager 관련 직무인지 확인"""
+    title_lower = title.lower()
+    pm_keywords = [
+        "product manager", "product management",
+        "program manager", "program management",
+        "project manager", "project management",
+    ]
+    return any(kw in title_lower for kw in pm_keywords)
+
+
+def _enrich_with_details(items):
+    """
+    각 검색 결과의 실제 채용 페이지에서 상세 정보 추출 후
+    위치 조건 필터링:
+    - Remote: Canada 어디든 OK
+    - On-site/Hybrid: Vancouver 광역권이어야 함
+    - 위치 정보 없음: 유지 (검색어에 vancouver 포함이므로)
+    """
+    jobs = []
+    seen_titles = set()  # 제목+회사 기준 중복 제거
+
+    for item in items:
+        url = _clean_job_url(item["link"])  # JD 본문 페이지로 정리
+        job = {
+            "title": item.get("title", ""),
+            "company": _extract_company_from_url(url),
+            "location": "",
+            "salary": "",
+            "employment_type": "",
+            "url": url,
+            "source": urlparse(url).netloc,
+        }
+
+        # 개별 채용 페이지에서 JSON-LD 상세 정보 추출 시도
+        details = _extract_job_details(url)
+        if details:
+            for key in ["title", "company", "location", "salary", "employment_type"]:
+                if details.get(key):
+                    job[key] = details[key]
+
+        # 위치 조건 필터링
+        if not _passes_location_filter(job["location"]):
+            continue
+
+        # 제목+회사 기준 중복 제거
+        dedup_key = (job["title"].lower().strip(), job["company"].lower().strip())
+        if dedup_key in seen_titles:
+            continue
+        seen_titles.add(dedup_key)
+
+        jobs.append(job)
+
+    print(f"  위치 필터 후: {len(jobs)}건")
+    return jobs
+
+
+# Vancouver 광역권 도시 목록
+VANCOUVER_METRO = [
+    "vancouver", "north vancouver", "west vancouver", "burnaby",
+    "richmond", "surrey", "new westminster", "coquitlam",
+    "port coquitlam", "port moody", "delta", "langley",
+    "maple ridge", "pitt meadows", "white rock",
+]
+
+# 캐나다 주(Province) 코드 및 이름
+CANADA_PROVINCES = [
+    "bc", "on", "qc", "ab", "mb", "sk", "ns", "nb", "nl", "pe", "yt", "nt", "nu",
+    "british columbia", "ontario", "quebec", "alberta", "manitoba",
+    "saskatchewan", "nova scotia", "new brunswick", "newfoundland",
+    "prince edward island", "yukon", "northwest territories", "nunavut",
+]
+
+
+def _passes_location_filter(location):
+    """
+    위치 조건 필터:
+    - Remote → Canada이면 통과
+    - On-site/Hybrid → Vancouver 광역권이면 통과
+    - 위치 정보 없음 → 통과 (benefit of the doubt)
+    """
+    if not location:
+        return True  # 위치 정보 없으면 유지
+
+    loc_lower = location.lower()
+
+    is_remote = "remote" in loc_lower
+
+    if is_remote:
+        # Remote인 경우: Canada여야 함
+        return _is_in_canada(loc_lower)
+    else:
+        # On-site/Hybrid: Vancouver 광역권이어야 함
+        return _is_in_vancouver_metro(loc_lower)
+
+
+def _is_in_canada(location_lower):
+    """캐나다 위치인지 확인"""
+    if "canada" in location_lower:
+        return True
+    # 주 코드/이름 확인 (예: "BC", "Ontario")
+    for province in CANADA_PROVINCES:
+        # 단어 경계로 매칭 (예: "bc"가 "pubbc" 같은 데서 매칭되지 않도록)
+        if re.search(r'\b' + re.escape(province) + r'\b', location_lower):
+            return True
+    return False
+
+
+def _is_in_vancouver_metro(location_lower):
+    """Vancouver 광역권인지 확인"""
+    for city in VANCOUVER_METRO:
+        if city in location_lower:
+            return True
+    # "BC" 가 포함되어 있으면 BC주 내 도시일 가능성 높음
+    if re.search(r'\bbc\b', location_lower):
+        return True
+    return False
+
+
+def _extract_company_from_url(url):
+    """URL 패턴에서 회사명 추출 (ATS마다 URL 구조가 다름)"""
+    try:
+        parts = url.replace("https://", "").replace("http://", "").split("/")
+        domain = parts[0]
+
+        # 예: jobs.lever.co/회사명/job-id
+        if domain in [
+            "jobs.lever.co",
+            "job-boards.greenhouse.io",
+            "jobs.ashbyhq.com",
+            "jobs.smartrecruiters.com",
+        ]:
+            if len(parts) > 1:
+                # 쿼리 파라미터 제거 후 회사명 추출
+                company = parts[1].split("?")[0]
+                return company.replace("-", " ").title()
+
+        # 예: wellfound.com/company/회사명/jobs/...
+        if "wellfound.com" in domain:
+            if "company" in parts and len(parts) > parts.index("company") + 1:
+                company = parts[parts.index("company") + 1].split("?")[0]
+                return company.replace("-", " ").title()
+    except Exception:
+        pass
+
+    return ""
+
+
+def _extract_job_details(url):
+    """
+    개별 채용 페이지에서 상세 정보 추출
+    JSON-LD 구조화 데이터(schema.org/JobPosting)를 찾아서 파싱합니다
+    """
+    try:
+        response = requests.get(url, timeout=10, headers=HEADERS)
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(script.string)
+
+                # 데이터가 리스트인 경우 JobPosting 항목 찾기
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and item.get("@type") == "JobPosting":
+                            data = item
+                            break
+                    else:
+                        continue
+
+                # @graph 안에 있는 경우
+                if isinstance(data, dict) and "@graph" in data:
+                    for item in data["@graph"]:
+                        if isinstance(item, dict) and item.get("@type") == "JobPosting":
+                            data = item
+                            break
+                    else:
+                        continue
+
+                if not isinstance(data, dict) or data.get("@type") != "JobPosting":
+                    continue
+
+                return {
+                    "title": data.get("title", ""),
+                    "company": _parse_company(data),
+                    "location": _parse_location(data),
+                    "salary": _parse_salary(data),
+                    "employment_type": _parse_employment_type(
+                        data.get("employmentType", "")
+                    ),
+                }
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                continue
+    except Exception:
+        pass
+
+    return None
+
+
+def _parse_company(data):
+    """JSON-LD에서 회사명 추출"""
+    org = data.get("hiringOrganization", {})
+    if isinstance(org, dict):
+        return org.get("name", "")
+    return ""
+
+
+def _parse_location(data):
+    """JSON-LD에서 근무지 추출"""
+    location = data.get("jobLocation", {})
+
+    if isinstance(location, list):
+        location = location[0] if location else {}
+
+    if isinstance(location, dict):
+        address = location.get("address", {})
+        if isinstance(address, dict):
+            parts = []
+            if address.get("addressLocality"):
+                parts.append(address["addressLocality"])
+            if address.get("addressRegion"):
+                parts.append(address["addressRegion"])
+            if parts:
+                if data.get("jobLocationType") == "TELECOMMUTE":
+                    return ", ".join(parts) + " (Remote)"
+                return ", ".join(parts)
+        elif isinstance(address, str):
+            return address
+
+    if data.get("jobLocationType") == "TELECOMMUTE":
+        return "Remote"
+
+    return ""
+
+
+def _parse_salary(data):
+    """JSON-LD에서 연봉 범위 추출"""
+    salary = data.get("baseSalary", {})
+
+    if not isinstance(salary, dict):
+        return ""
+
+    value = salary.get("value", {})
+    currency = salary.get("currency", "CAD")
+
+    if isinstance(value, dict):
+        min_val = value.get("minValue")
+        max_val = value.get("maxValue")
+
+        if min_val and max_val:
+            try:
+                return f"${float(min_val):,.0f}–${float(max_val):,.0f} {currency}"
+            except (ValueError, TypeError):
+                return f"${min_val}–${max_val} {currency}"
+        elif min_val:
+            try:
+                return f"${float(min_val):,.0f}+ {currency}"
+            except (ValueError, TypeError):
+                return f"${min_val}+ {currency}"
+    elif isinstance(value, (int, float)):
+        return f"${value:,.0f} {currency}"
+
+    return ""
+
+
+def _parse_employment_type(emp_type):
+    """고용 형태를 읽기 좋게 변환 (예: FULL_TIME → Full-time)"""
+    if not emp_type:
+        return ""
+
+    mapping = {
+        "FULL_TIME": "Full-time",
+        "PART_TIME": "Part-time",
+        "CONTRACT": "Contract",
+        "TEMPORARY": "Temporary",
+        "INTERN": "Internship",
+        "OTHER": "",
+    }
+
+    if isinstance(emp_type, list):
+        types = [mapping.get(t, t) for t in emp_type if mapping.get(t, t)]
+        return ", ".join(types)
+    return mapping.get(emp_type, emp_type)

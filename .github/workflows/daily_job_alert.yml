@@ -1,0 +1,37 @@
+name: Daily PM Job Alert
+
+on:
+  schedule:
+    # 매일 새벽 1시 밴쿠버 시간 (PDT=UTC-7)
+    # PDT 기준: 1AM = 8AM UTC
+    # PST(겨울) 기준: 1AM = 9AM UTC → 이때는 새벽 2시에 실행됨
+    - cron: '0 9 * * *'
+  workflow_dispatch: # 수동 실행도 가능 (GitHub에서 "Run workflow" 버튼)
+
+jobs:
+  send-job-alert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # GitHub Secrets에 저장된 인증 파일을 복원
+      - name: Set up credentials
+        run: |
+          echo '${{ secrets.GMAIL_CREDENTIALS }}' > credentials.json
+          echo '${{ secrets.GMAIL_TOKEN }}' > token.json
+
+      - name: Run job alert
+        env:
+          CI: true
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          SEARCH_ENGINE_ID: ${{ secrets.SEARCH_ENGINE_ID }}
+        run: python main.py
