@@ -40,13 +40,20 @@ def search_all_jobs():
     filtered = _filter_results(raw_results)
     jobs = _enrich_with_details(filtered)
 
-    # LinkedIn 검색 결과 병합
+    # LinkedIn 검색 결과 병합 (URL + title+company 중복 제거)
     linkedin_jobs = _search_linkedin_jobs()
     if linkedin_jobs:
         existing_urls = {j["url"] for j in jobs}
+        existing_keys = {(j["title"].lower().strip(), j["company"].lower().strip()) for j in jobs}
         for lj in linkedin_jobs:
-            if lj["url"] not in existing_urls:
-                jobs.append(lj)
+            if lj["url"] in existing_urls:
+                continue
+            dedup_key = (lj["title"].lower().strip(), lj["company"].lower().strip())
+            if dedup_key in existing_keys:
+                continue
+            existing_urls.add(lj["url"])
+            existing_keys.add(dedup_key)
+            jobs.append(lj)
         jobs.sort(key=lambda j: j.get("date_posted") or "0000-00-00", reverse=True)
         print(f"  LinkedIn 병합 후: {len(jobs)}건")
 
@@ -58,14 +65,18 @@ def _fetch_search_results():
     all_items = []
     seen_urls = set()
 
-    # 3가지 직무를 각각 정확한 구문으로 검색
+    # 5가지 직무를 각각 정확한 구문으로 검색
     queries = [
         '"product manager" vancouver',
         '"program manager" vancouver',
         '"project manager" vancouver',
+        '"product lead" vancouver',
+        '"product operations" vancouver',
         '"product manager" remote canada',
         '"program manager" remote canada',
         '"project manager" remote canada',
+        '"product lead" remote canada',
+        '"product operations" remote canada',
     ]
 
     print("  Google Custom Search API로 검색 중...")
@@ -219,6 +230,8 @@ def _is_pm_related(title):
         "product manager", "product management",
         "program manager", "program management",
         "project manager", "project management",
+        "product lead",
+        "product operations",
     ]
     return any(kw in title_lower for kw in pm_keywords)
 
@@ -243,7 +256,7 @@ def _enrich_with_details(items):
         google_title = re.sub(r"\s*[-–|]\s*(Greenhouse|TELUS Jobs|Jobs|Career Opportunities).*$", "", google_title, flags=re.I)
         # Greenhouse 패턴: "Job Application for {직무} at {회사}" → 직무만 추출
         google_title = re.sub(r"^Job Application for\s+", "", google_title, flags=re.I)
-        google_title = re.sub(r"\s+at\s+\S+$", "", google_title)
+        google_title = re.sub(r"\s+at\s+.+$", "", google_title)
 
         job = {
             "title": google_title.strip(),
@@ -379,8 +392,12 @@ def _passes_location_filter(location):
         # NAMER (North America Region) → Canada 포함으로 간주
         if "namer" in loc_lower:
             return True
-        # Remote인 경우: Canada여야 함
-        return _is_in_canada(loc_lower)
+        # 미국 명시 → 제외
+        if any(kw in loc_lower for kw in ["united states", "u.s.", "usa"]):
+            return False
+        # Canada 명시 또는 국가 미지정 → 통과
+        # (국가 미지정 Remote는 이미 CSE/LinkedIn에서 Canada 범위로 검색했으므로 허용)
+        return True
     else:
         # On-site/Hybrid: Vancouver 광역권이어야 함
         return _is_in_vancouver_metro(loc_lower)
@@ -399,13 +416,10 @@ def _is_in_canada(location_lower):
 
 
 def _is_in_vancouver_metro(location_lower):
-    """Vancouver 광역권인지 확인"""
+    """Vancouver 광역권인지 확인 (VANCOUVER_METRO 목록에 있는 도시만)"""
     for city in VANCOUVER_METRO:
         if city in location_lower:
             return True
-    # "BC" 가 포함되어 있으면 BC주 내 도시일 가능성 높음
-    if re.search(r'\bbc\b', location_lower):
-        return True
     return False
 
 
@@ -562,8 +576,7 @@ def _extract_from_microdata(soup):
         date_match = re.search(r"([A-Z][a-z]+ \d{1,2},?\s*\d{4})", date_posted)
         if date_match:
             try:
-                from datetime import datetime as dt
-                parsed = dt.strptime(date_match.group(1).replace(",", ""), "%B %d %Y")
+                parsed = datetime.strptime(date_match.group(1).replace(",", ""), "%B %d %Y")
                 date_posted = parsed.strftime("%Y-%m-%d")
             except ValueError:
                 date_posted = ""
@@ -701,8 +714,8 @@ def _fetch_greenhouse(company, job_id):
     data = r.json()
 
     location = data.get("location", {}).get("name", "")
-    # updated_at: "2026-03-01T00:00:00.000Z"
-    date_posted = (data.get("updated_at") or "")[:10]
+    # published_at 우선, 없으면 updated_at fallback
+    date_posted = (data.get("published_at") or data.get("updated_at") or "")[:10]
 
     return {
         "title": data.get("title", ""),
@@ -791,24 +804,30 @@ def _search_linkedin_jobs():
     """
     Apify LinkedIn Jobs Scraper로 LinkedIn 공고 검색
     - APIFY_TOKEN 환경변수가 없으면 건너뜀
-    - 기본 actor: bebity/linkedin-jobs-scraper (APIFY_ACTOR_ID로 변경 가능)
+    - 기본 actor: worldunboxer/rapid-linkedin-scraper (APIFY_ACTOR_ID로 변경 가능)
     """
     if not APIFY_TOKEN:
         return []
 
     print("  LinkedIn(Apify) 검색 중...")
     try:
-        # Vancouver + Remote Canada 두 번 검색 후 합산
+        # Vancouver(on-site/hybrid) + Canada Remote 두 번 검색 후 합산
         all_items = []
-        for location_query in ["Vancouver, BC", "Canada"]:
+        searches = [
+            {"location": "Vancouver, BC"},
+            {"location": "Canada", "work_schedule": "Remote"},
+        ]
+        for search_params in searches:
             actor_input = {
                 "searchTerms": [
                     "product manager",
                     "program manager",
                     "project manager",
+                    "product lead",
+                    "product operations",
                 ],
-                "location": location_query,
                 "maxItems": 50,
+                **search_params,
             }
             api_url = (
                 f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}"
@@ -818,16 +837,14 @@ def _search_linkedin_jobs():
             if response.ok and isinstance(response.json(), list):
                 all_items.extend(response.json())
 
-        items = all_items
-
-        if not items:
+        if not all_items:
             print("  LinkedIn 응답 없음")
             return []
 
         jobs = []
         seen_urls = set()
 
-        for item in items:
+        for item in all_items:
             # worldunboxer/rapid-linkedin-scraper 필드명
             title = item.get("job_title") or item.get("jobTitle") or item.get("title") or ""
             company = item.get("company_name") or item.get("companyName") or item.get("company") or ""

@@ -111,8 +111,8 @@ def build_email_body(jobs):
     html += """
         <hr style="border: 1px solid #eee;">
         <p style="color: #bbb; font-size: 11px;">
-            Search: "Product/Program/Project Manager" in Vancouver, Canada<br>
-            Sources: Greenhouse, Lever, Workday, SmartRecruiters, Ashby + 10 sites<br>
+            Search: "Product/Program/Project Manager", "Product Lead", "Product Operations" in Vancouver &amp; Remote Canada<br>
+            Sources: Greenhouse, Lever, Workday, SmartRecruiters, Ashby + 10 sites, LinkedIn<br>
             "X days ago" = actual posting date from the job page
         </p>
     </body>
@@ -146,6 +146,10 @@ def _simplify_location(location):
             found_city = city.title()
             break
 
+    # NAMER (North America Region) → Remote, Canada로 표시
+    if "namer" in loc_lower:
+        return "Remote, Canada (NAMER)"
+
     if is_remote and found_city:
         return f"{found_city} (Remote)"
     elif is_remote:
@@ -172,7 +176,7 @@ def _format_days_ago(date_posted):
             return f"{diff} days ago"
     except (ValueError, TypeError):
         pass
-    return ""
+    return "Date not listed"
 
 
 def send_email(subject, html_body):
