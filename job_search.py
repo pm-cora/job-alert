@@ -9,10 +9,14 @@ import json
 import os
 import re
 import requests
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
+
+# Apify LinkedIn 검색 설정 (APIFY_TOKEN이 없으면 LinkedIn 검색 건너뜀)
+APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
+APIFY_ACTOR_ID = os.environ.get("APIFY_ACTOR_ID", "worldunboxer/rapid-linkedin-scraper")
 
 # Google Custom Search API 설정
 API_KEY = os.environ.get("GOOGLE_API_KEY", "")
@@ -26,15 +30,26 @@ HEADERS = {
 
 def search_all_jobs():
     """
-    Google Custom Search API로 Product Manager 공고 검색
-    1. API로 검색 결과 수집
+    Google Custom Search API + LinkedIn(Apify)로 Product Manager 공고 검색
+    1. Google CSE로 ATS 도메인 검색
     2. 리스트 페이지, 관련 없는 공고 필터링
-    3. 중복 제거
-    4. 개별 페이지에서 상세 정보 추출
+    3. ATS API 우선으로 상세 정보 추출
+    4. LinkedIn 검색 결과 병합 (APIFY_TOKEN 있을 때만)
     """
     raw_results = _fetch_search_results()
     filtered = _filter_results(raw_results)
     jobs = _enrich_with_details(filtered)
+
+    # LinkedIn 검색 결과 병합
+    linkedin_jobs = _search_linkedin_jobs()
+    if linkedin_jobs:
+        existing_urls = {j["url"] for j in jobs}
+        for lj in linkedin_jobs:
+            if lj["url"] not in existing_urls:
+                jobs.append(lj)
+        jobs.sort(key=lambda j: j.get("date_posted") or "0000-00-00", reverse=True)
+        print(f"  LinkedIn 병합 후: {len(jobs)}건")
+
     return jobs
 
 
@@ -234,20 +249,29 @@ def _enrich_with_details(items):
             "title": google_title.strip(),
             "company": _extract_company_from_url(url),
             "location": "",
-            "salary": "",
             "employment_type": "",
             "date_posted": "",
             "url": url,
         }
 
-        # 개별 채용 페이지에서 JSON-LD 상세 정보 추출 시도
-        details = _extract_job_details(url)
+        # 상세 정보 추출: ATS API 우선, HTML 스크래핑 fallback
         page_text = ""
-        if details:
-            page_text = details.pop("_page_text", "")
-            for key in ["title", "company", "location", "salary", "employment_type", "date_posted"]:
-                if details.get(key):
-                    job[key] = details[key]
+
+        # 1차: ATS 공개 API (Greenhouse / Lever / Ashby / SmartRecruiters)
+        api_data = _fetch_from_ats_api(url)
+        if api_data:
+            for key in ["title", "company", "location", "date_posted"]:
+                if api_data.get(key):
+                    job[key] = api_data[key]
+
+        # 2차: HTML 스크래핑 (API 없거나 location / date 누락 시)
+        if not job["location"] or not job["date_posted"]:
+            details = _extract_job_details(url)
+            if details:
+                page_text = details.pop("_page_text", "")
+                for key in ["title", "company", "location", "employment_type", "date_posted"]:
+                    if details.get(key) and not job[key]:
+                        job[key] = details[key]
 
         # 게시일 기준 필터링: 7일 이내만 (날짜 정보 없으면 유지)
         if not _passes_date_filter(job["date_posted"]):
@@ -330,6 +354,10 @@ def _verify_location_from_text(page_text):
     if "canada" in page_text and "remote" in page_text:
         return True
 
+    # "namer" + "remote" 포함 → Remote North America (Canada 포함으로 간주)
+    if "namer" in page_text and "remote" in page_text:
+        return True
+
     return False
 
 
@@ -348,6 +376,9 @@ def _passes_location_filter(location):
     is_remote = "remote" in loc_lower or "flexible" in loc_lower
 
     if is_remote:
+        # NAMER (North America Region) → Canada 포함으로 간주
+        if "namer" in loc_lower:
+            return True
         # Remote인 경우: Canada여야 함
         return _is_in_canada(loc_lower)
     else:
@@ -462,11 +493,11 @@ def _extract_job_details(url):
                     "title": data.get("title", ""),
                     "company": _parse_company(data),
                     "location": _parse_location(data),
-                    "salary": _parse_salary(data),
                     "employment_type": _parse_employment_type(
                         data.get("employmentType", "")
                     ),
                     "date_posted": data.get("datePosted", ""),
+                    "_page_text": soup.get_text(separator=" ", strip=True).lower(),
                 }
             except (json.JSONDecodeError, AttributeError, TypeError):
                 continue
@@ -518,15 +549,6 @@ def _extract_from_microdata(soup):
         if name_el:
             company = name_el.get_text(strip=True)
 
-    # 급여: minValue, maxValue, unitText
-    salary = ""
-    min_val = _get_prop("minValue")
-    max_val = _get_prop("maxValue")
-    unit = _get_prop("unitText")
-    if min_val and max_val:
-        unit_label = {"HOUR": "/hr", "YEAR": "/yr", "MONTH": "/mo"}.get(unit.upper(), "")
-        salary = f"${min_val}–${max_val}{unit_label}"
-
     # 고용형태 (Job Bank: "Permanent employmentFull time" → 정리)
     emp_type = _get_prop("employmentType")
     emp_type = emp_type.replace("employment", "employment, ")
@@ -554,7 +576,6 @@ def _extract_from_microdata(soup):
         "title": title,
         "company": company,
         "location": location,
-        "salary": salary,
         "employment_type": emp_type,
         "date_posted": date_posted,
     }
@@ -620,36 +641,6 @@ def _parse_location(data):
     return ""
 
 
-def _parse_salary(data):
-    """JSON-LD에서 연봉 범위 추출"""
-    salary = data.get("baseSalary", {})
-
-    if not isinstance(salary, dict):
-        return ""
-
-    value = salary.get("value", {})
-    currency = salary.get("currency", "CAD")
-
-    if isinstance(value, dict):
-        min_val = value.get("minValue")
-        max_val = value.get("maxValue")
-
-        if min_val and max_val:
-            try:
-                return f"${float(min_val):,.0f}–${float(max_val):,.0f} {currency}"
-            except (ValueError, TypeError):
-                return f"${min_val}–${max_val} {currency}"
-        elif min_val:
-            try:
-                return f"${float(min_val):,.0f}+ {currency}"
-            except (ValueError, TypeError):
-                return f"${min_val}+ {currency}"
-    elif isinstance(value, (int, float)):
-        return f"${value:,.0f} {currency}"
-
-    return ""
-
-
 def _parse_employment_type(emp_type):
     """고용 형태를 읽기 좋게 변환 (예: FULL_TIME → Full-time)"""
     if not emp_type:
@@ -668,3 +659,238 @@ def _parse_employment_type(emp_type):
         types = [mapping.get(t, t) for t in emp_type if mapping.get(t, t)]
         return ", ".join(types)
     return mapping.get(emp_type, emp_type)
+
+
+# ──────────────────────────────────────────────
+# ATS 공개 API 직접 연동
+# ──────────────────────────────────────────────
+
+def _fetch_from_ats_api(url):
+    """URL 패턴을 보고 ATS 공개 API를 직접 호출해서 상세 정보 반환"""
+    try:
+        # Greenhouse: job-boards.greenhouse.io/{company}/jobs/{job_id}
+        m = re.match(r'https://job-boards\.greenhouse\.io/([^/]+)/jobs/(\d+)', url)
+        if m:
+            return _fetch_greenhouse(m.group(1), m.group(2))
+
+        # Lever: jobs.lever.co/{company}/{uuid}
+        m = re.match(r'https://jobs\.lever\.co/([^/]+)/([0-9a-f-]{36})', url)
+        if m:
+            return _fetch_lever(m.group(1), m.group(2))
+
+        # Ashby: jobs.ashbyhq.com/{company}/{uuid}
+        m = re.match(r'https://jobs\.ashbyhq\.com/([^/]+)/([0-9a-f-]{36})', url)
+        if m:
+            return _fetch_ashby(m.group(1), m.group(2))
+
+        # SmartRecruiters: jobs.smartrecruiters.com/{company}/{job_id}
+        m = re.match(r'https://jobs\.smartrecruiters\.com/([^/]+)/(\d+)', url)
+        if m:
+            return _fetch_smartrecruiters(m.group(1), m.group(2))
+
+    except Exception as e:
+        print(f"  ATS API 실패 ({url}): {e}")
+
+    return None
+
+
+def _fetch_greenhouse(company, job_id):
+    """Greenhouse 공개 API로 특정 공고 정보 조회"""
+    url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{job_id}"
+    r = requests.get(url, timeout=10, headers=HEADERS)
+    data = r.json()
+
+    location = data.get("location", {}).get("name", "")
+    # updated_at: "2026-03-01T00:00:00.000Z"
+    date_posted = (data.get("updated_at") or "")[:10]
+
+    return {
+        "title": data.get("title", ""),
+        "location": location,
+        "date_posted": date_posted,
+    }
+
+
+def _fetch_lever(company, job_id):
+    """Lever 공개 API로 특정 공고 정보 조회"""
+    url = f"https://api.lever.co/v0/postings/{company}/{job_id}"
+    r = requests.get(url, timeout=10, headers=HEADERS)
+    data = r.json()
+
+    categories = data.get("categories", {})
+    location = categories.get("location", "")
+
+    # createdAt은 milliseconds timestamp
+    date_posted = ""
+    created_at = data.get("createdAt")
+    if created_at:
+        dt = datetime.fromtimestamp(created_at / 1000, tz=ZoneInfo("UTC"))
+        date_posted = dt.strftime("%Y-%m-%d")
+
+    return {
+        "title": data.get("text", ""),
+        "location": location,
+        "date_posted": date_posted,
+    }
+
+
+def _fetch_ashby(company, job_id):
+    """Ashby 공개 API로 특정 공고 정보 조회 (전체 목록에서 ID로 검색)"""
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{company}/published"
+    r = requests.get(url, timeout=10, headers=HEADERS)
+    data = r.json()
+
+    job = next((j for j in data.get("jobs", []) if j.get("id") == job_id), None)
+    if not job:
+        return None
+
+    # location: Place schema
+    loc = job.get("location")
+    location = loc.get("name", "") if isinstance(loc, dict) else (loc or "")
+    if job.get("isRemote"):
+        location = (location + " (Remote)") if location else "Remote"
+
+    # publishedAt: "2021-04-30T16:21:55.393+00:00"
+    date_posted = (job.get("publishedAt") or "")[:10]
+
+    return {
+        "title": job.get("title", ""),
+        "location": location,
+        "date_posted": date_posted,
+    }
+
+
+def _fetch_smartrecruiters(company, job_id):
+    """SmartRecruiters 공개 API로 특정 공고 정보 조회"""
+    url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}"
+    r = requests.get(url, timeout=10, headers=HEADERS)
+    data = r.json()
+
+    loc = data.get("location", {})
+    parts = [p for p in [loc.get("city"), loc.get("region"), loc.get("country")] if p]
+    location = ", ".join(parts)
+    if loc.get("remote"):
+        location = (location + " (Remote)") if location else "Remote"
+
+    # releasedDate: "2026-03-15"
+    date_posted = (data.get("releasedDate") or "")[:10]
+
+    return {
+        "title": data.get("name", ""),
+        "company": data.get("company", {}).get("name", ""),
+        "location": location,
+        "date_posted": date_posted,
+    }
+
+
+# ──────────────────────────────────────────────
+# Apify LinkedIn 검색
+# ──────────────────────────────────────────────
+
+def _search_linkedin_jobs():
+    """
+    Apify LinkedIn Jobs Scraper로 LinkedIn 공고 검색
+    - APIFY_TOKEN 환경변수가 없으면 건너뜀
+    - 기본 actor: bebity/linkedin-jobs-scraper (APIFY_ACTOR_ID로 변경 가능)
+    """
+    if not APIFY_TOKEN:
+        return []
+
+    print("  LinkedIn(Apify) 검색 중...")
+    try:
+        # Vancouver + Remote Canada 두 번 검색 후 합산
+        all_items = []
+        for location_query in ["Vancouver, BC", "Canada"]:
+            actor_input = {
+                "searchTerms": [
+                    "product manager",
+                    "program manager",
+                    "project manager",
+                ],
+                "location": location_query,
+                "maxItems": 50,
+            }
+            api_url = (
+                f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}"
+                f"/run-sync-get-dataset-items?token={APIFY_TOKEN}&timeout=300"
+            )
+            response = requests.post(api_url, json=actor_input, timeout=320)
+            if response.ok and isinstance(response.json(), list):
+                all_items.extend(response.json())
+
+        items = all_items
+
+        if not items:
+            print("  LinkedIn 응답 없음")
+            return []
+
+        jobs = []
+        seen_urls = set()
+
+        for item in items:
+            # worldunboxer/rapid-linkedin-scraper 필드명
+            title = item.get("job_title") or item.get("jobTitle") or item.get("title") or ""
+            company = item.get("company_name") or item.get("companyName") or item.get("company") or ""
+            location = item.get("location") or ""
+            job_url = item.get("job_url") or item.get("jobUrl") or item.get("url") or ""
+            posted_at = item.get("time_posted") or item.get("postedAt") or item.get("postedDate") or ""
+
+            if not job_url or job_url in seen_urls:
+                continue
+
+            date_posted = _parse_linkedin_date(posted_at)
+
+            job = {
+                "title": title,
+                "company": company,
+                "location": location,
+                "employment_type": "",
+                "date_posted": date_posted,
+                "url": job_url,
+            }
+
+            if not _is_pm_related(title):
+                continue
+            if job["location"] and not _passes_location_filter(job["location"]):
+                continue
+            if not _passes_date_filter(job["date_posted"]):
+                continue
+
+            seen_urls.add(job_url)
+            jobs.append(job)
+
+        print(f"  LinkedIn 결과: {len(jobs)}건")
+        return jobs
+
+    except Exception as e:
+        print(f"  LinkedIn 검색 실패: {e}")
+        return []
+
+
+def _parse_linkedin_date(date_str):
+    """LinkedIn 상대 날짜 → YYYY-MM-DD 변환 ('2 days ago', 'Just now' 등)"""
+    if not date_str:
+        return ""
+    s = str(date_str).strip().lower()
+    today = datetime.now(ZoneInfo("America/Vancouver")).date()
+
+    if any(w in s for w in ["just", "moment", "hour", "minute", "second"]):
+        return today.isoformat()
+
+    m = re.search(r'(\d+)\s*day', s)
+    if m:
+        return (today - timedelta(days=int(m.group(1)))).isoformat()
+
+    m = re.search(r'(\d+)\s*week', s)
+    if m:
+        return (today - timedelta(days=int(m.group(1)) * 7)).isoformat()
+
+    m = re.search(r'(\d+)\s*month', s)
+    if m:
+        return (today - timedelta(days=int(m.group(1)) * 30)).isoformat()
+
+    # ISO date 또는 절대 날짜
+    try:
+        return date.fromisoformat(s[:10]).isoformat()
+    except ValueError:
+        return ""

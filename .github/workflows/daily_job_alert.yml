@@ -2,7 +2,7 @@ name: Daily PM Job Alert
 
 on:
   schedule:
-    - cron: '0 9 * * *'
+    - cron: '0 23 * * *'
   workflow_dispatch:
 
 jobs:
@@ -30,4 +30,5 @@ jobs:
           CI: true
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           SEARCH_ENGINE_ID: ${{ secrets.SEARCH_ENGINE_ID }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         run: python main.py

@@ -88,9 +88,6 @@ def build_email_body(jobs):
         if job.get("location"):
             html += f'<p style="margin: 4px 0;">Location: {_simplify_location(job["location"])}</p>'
 
-        if job.get("salary"):
-            html += f'<p style="margin: 4px 0;">Salary: {job["salary"]}</p>'
-
         if job.get("employment_type"):
             html += f'<p style="margin: 4px 0;">Type: {job["employment_type"]}</p>'
 
@@ -162,7 +159,7 @@ def _simplify_location(location):
 def _format_days_ago(date_posted):
     """날짜 문자열(YYYY-MM-DD)을 'today', '1 day ago', '3 days ago' 등으로 변환"""
     if not date_posted:
-        return ""
+        return "Date not listed"
     try:
         posted = date.fromisoformat(date_posted[:10])
         today = datetime.now(ZoneInfo("America/Vancouver")).date()
