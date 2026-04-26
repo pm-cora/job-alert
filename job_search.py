@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 
+KEYWORDS = ["CRM", "FinTech"]
+
 # Apify LinkedIn 검색 설정 (APIFY_TOKEN이 없으면 LinkedIn 검색 건너뜀)
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
 APIFY_ACTOR_ID = os.environ.get("APIFY_ACTOR_ID", "worldunboxer/rapid-linkedin-scraper")
@@ -265,6 +267,7 @@ def _enrich_with_details(items):
             "employment_type": "",
             "date_posted": "",
             "url": url,
+            "keywords": [],
         }
 
         # 상세 정보 추출: ATS API 우선, HTML 스크래핑 fallback
@@ -285,6 +288,7 @@ def _enrich_with_details(items):
                 for key in ["title", "company", "location", "employment_type", "date_posted"]:
                     if details.get(key) and not job[key]:
                         job[key] = details[key]
+                job["keywords"] = [kw for kw in KEYWORDS if kw.lower() in page_text.lower()]
 
         # 게시일 기준 필터링: 7일 이내만 (날짜 정보 없으면 유지)
         if not _passes_date_filter(job["date_posted"]):

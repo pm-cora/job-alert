@@ -30,8 +30,10 @@ def send_email(subject, html_body):
         server.sendmail(SMTP_USER, TO_EMAIL, message.as_string())
 
 
-def build_email_body(jobs):
+def build_email_body(jobs, seen_urls=None):
     """채용공고 목록을 이메일 HTML 본문으로 변환"""
+    if seen_urls is None:
+        seen_urls = set()
     today = datetime.now(ZoneInfo("America/Vancouver")).strftime("%Y-%m-%d")
 
     html = f"""
@@ -45,6 +47,9 @@ def build_email_body(jobs):
     """
 
     for i, job in enumerate(jobs, 1):
+        is_seen = job["url"] in seen_urls
+        btn_color = "#aaaaaa" if is_seen else "#3498db"
+
         html += f"""
         <div style="margin: 20px 0; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px;">
             <h3 style="margin: 0 0 8px 0; color: #2c3e50;">{i}. {job['title']}</h3>
@@ -63,7 +68,7 @@ def build_email_body(jobs):
 
         html += f"""
             <a href="{job['url']}" style="display: inline-block; margin-top: 12px; padding: 8px 20px;
-               background-color: #3498db; color: #ffffff; text-decoration: none;
+               background-color: {btn_color}; color: #ffffff; text-decoration: none;
                border-radius: 5px; font-size: 14px; font-weight: bold;">
                 View posting
             </a>
@@ -71,6 +76,9 @@ def build_email_body(jobs):
 
         if posted_label:
             html += f'<span style="margin-left: 12px; color: #999; font-size: 12px;">{posted_label}</span>'
+
+        for kw in job.get("keywords", []):
+            html += f'<span style="margin-left: 8px; padding: 2px 8px; background-color: #eaf4fb; color: #2980b9; border-radius: 4px; font-size: 12px;">{kw}</span>'
 
         html += """
         </div>

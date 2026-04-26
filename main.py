@@ -4,8 +4,9 @@ Vancouver Product Manager 채용공고 자동 알림 스크립트
 - 결과를 이메일로 발송
 """
 
+import json
 import os
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -22,13 +23,35 @@ if env_path.exists():
 from job_search import search_all_jobs
 from email_sender import send_email, build_email_body
 
+SEEN_JOBS_FILE = Path(__file__).parent / "seen_jobs.json"
+
+
+def _load_seen_urls():
+    if not SEEN_JOBS_FILE.exists():
+        return {}
+    try:
+        return json.loads(SEEN_JOBS_FILE.read_text()).get("seen", {})
+    except Exception:
+        return {}
+
+
+def _save_seen_urls(jobs, prev_seen):
+    today = date.today().isoformat()
+    cutoff = (date.today() - timedelta(days=30)).isoformat()
+    seen = {url: d for url, d in prev_seen.items() if d >= cutoff}
+    for job in jobs:
+        if job["url"] not in seen:
+            seen[job["url"]] = today
+    SEEN_JOBS_FILE.write_text(json.dumps({"seen": seen}, indent=2, ensure_ascii=False))
+
 
 def main():
-    # 밴쿠버 시간 기준
     now_van = datetime.now(ZoneInfo("America/Vancouver"))
     print(f"검색 시작... ({now_van.strftime('%Y-%m-%d %H:%M')} Vancouver time)")
 
-    # 모든 ATS 도메인에서 채용공고 검색
+    seen_map = _load_seen_urls()
+    seen_urls = set(seen_map.keys())
+
     jobs = search_all_jobs()
 
     if not jobs:
@@ -37,13 +60,14 @@ def main():
 
     print(f"총 {len(jobs)}건의 공고 발견")
     for i, job in enumerate(jobs, 1):
-        print(f"  {i}. [{job.get('date_posted','')}] {job['title']} | {job.get('company','')} | {job.get('location','')} | {job['url']}")
+        label = "(재등장)" if job["url"] in seen_urls else "(신규)"
+        print(f"  {i}. {label} [{job.get('date_posted','')}] {job['title']} | {job.get('company','')} | {job.get('location','')} | {job['url']}")
 
-    # 이메일 본문 생성 및 발송
     subject = f"Caroline's Job Alert — {now_van.strftime('%Y-%m-%d')}"
-    body = build_email_body(jobs)
+    body = build_email_body(jobs, seen_urls)
     send_email(subject, body)
 
+    _save_seen_urls(jobs, seen_map)
     print("이메일 발송 완료!")
 
 
