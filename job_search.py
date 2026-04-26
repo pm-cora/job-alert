@@ -374,32 +374,46 @@ def _verify_location_from_text(page_text):
     return False
 
 
+NON_CANADA_KEYWORDS = [
+    "united states", "u.s.", "usa",
+    "united kingdom", "u.k.", "england", "scotland", "wales",
+    "mexico",
+    "australia",
+    "india",
+    "europe",
+    "brazil",
+    "germany",
+    "france",
+]
+
+
 def _passes_location_filter(location):
     """
     위치 조건 필터:
-    - Remote → Canada이면 통과
-    - On-site/Hybrid → Vancouver 광역권이면 통과
+    - Remote → Canada 명시 또는 국가 미지정이면 통과 / 비캐나다 국가 명시면 제외
+    - On-site/Hybrid → Vancouver 광역권이어야 함
     - 위치 정보 없음 → 통과 (benefit of the doubt)
     """
     if not location:
-        return True  # 위치 정보 없으면 유지
+        return True
 
     loc_lower = location.lower()
-
     is_remote = "remote" in loc_lower or "flexible" in loc_lower
 
     if is_remote:
-        # NAMER (North America Region) → Canada 포함으로 간주
         if "namer" in loc_lower:
             return True
-        # 미국 명시 → 제외
-        if any(kw in loc_lower for kw in ["united states", "u.s.", "usa"]):
+        # Canada 명시 → 통과 (US도 함께 언급된 경우 포함)
+        if "canada" in loc_lower or _is_in_canada(loc_lower):
+            return True
+        # Canada 없이 비캐나다 국가 명시 → 제외
+        if re.search(r'\bus\b', loc_lower):
             return False
-        # Canada 명시 또는 국가 미지정 → 통과
-        # (국가 미지정 Remote는 이미 CSE/LinkedIn에서 Canada 범위로 검색했으므로 허용)
+        if any(kw in loc_lower for kw in NON_CANADA_KEYWORDS):
+            return False
+        # 국가 미지정 → 통과 (Google CSE가 이미 Canada 범위로 검색)
         return True
     else:
-        # On-site/Hybrid: Vancouver 광역권이어야 함
         return _is_in_vancouver_metro(loc_lower)
 
 

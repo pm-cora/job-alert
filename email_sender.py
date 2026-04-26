@@ -128,7 +128,7 @@ def _simplify_location(location):
 def _format_days_ago(date_posted):
     """날짜 문자열(YYYY-MM-DD)을 'today', '1 day ago', '3 days ago' 등으로 변환"""
     if not date_posted:
-        return "Date not listed"
+        return "within 7 days (by Google)"
     try:
         posted = date.fromisoformat(date_posted[:10])
         today = datetime.now(ZoneInfo("America/Vancouver")).date()
@@ -141,4 +141,4 @@ def _format_days_ago(date_posted):
             return f"{diff} days ago"
     except (ValueError, TypeError):
         pass
-    return "Date not listed"
+    return "within 7 days (by Google)"
