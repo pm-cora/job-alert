@@ -1,64 +1,33 @@
 """
-Gmail API를 사용하여 채용공고 알림 이메일을 발송하는 모듈
-- OAuth 2.0 인증 사용 (App Password 대신 Google 공식 인증 방식)
-- 처음 실행 시 브라우저에서 Google 로그인이 필요합니다 (1회만)
+Gmail SMTP를 사용하여 채용공고 알림 이메일을 발송하는 모듈
+- Gmail App Password 방식 (토큰 만료 없음)
 """
 
 import os
-import base64
+import smtplib
 from datetime import datetime, date
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from zoneinfo import ZoneInfo
 
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
+SMTP_USER = os.environ.get("GMAIL_USER", "")
+SMTP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 
-# Gmail 발송 권한 scope
-SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
-
-# 수신자 이메일
 TO_EMAIL = ["REDACTED", "REDACTED"]
 
-# 인증 파일 경로 (이 스크립트와 같은 폴더에 위치)
-CREDENTIALS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "credentials.json")
-TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.json")
 
+def send_email(subject, html_body):
+    """Gmail SMTP로 이메일 발송"""
+    message = MIMEMultipart("alternative")
+    message["From"] = SMTP_USER
+    message["Bcc"] = ", ".join(TO_EMAIL)
+    message["Subject"] = subject
 
-def get_gmail_service():
-    """
-    Gmail API 서비스 객체 생성
-    - token.json이 있으면 저장된 인증 정보 사용
-    - 없거나 만료되면 브라우저로 로그인 (최초 1회)
-    """
-    creds = None
+    message.attach(MIMEText(html_body, "html"))
 
-    # 저장된 토큰이 있으면 로드
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-
-    # 토큰이 없거나 만료된 경우
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            # 만료된 토큰 자동 갱신
-            creds.refresh(Request())
-        else:
-            # GitHub Actions 등 CI 환경에서는 브라우저 로그인 불가
-            if os.environ.get("CI"):
-                raise RuntimeError(
-                    "토큰이 만료되었습니다. 로컬에서 다시 인증 후 GitHub Secret을 업데이트하세요."
-                )
-            # 새로 로그인 (브라우저가 열림)
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        # 갱신된 토큰 저장 (다음번에는 자동 로그인)
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
-
-    return build("gmail", "v1", credentials=creds)
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.sendmail(SMTP_USER, TO_EMAIL, message.as_string())
 
 
 def build_email_body(jobs):
@@ -76,7 +45,6 @@ def build_email_body(jobs):
     """
 
     for i, job in enumerate(jobs, 1):
-        # 각 공고를 카드 형태로 표시
         html += f"""
         <div style="margin: 20px 0; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px;">
             <h3 style="margin: 0 0 8px 0; color: #2c3e50;">{i}. {job['title']}</h3>
@@ -136,17 +104,14 @@ def _simplify_location(location):
         return ""
     loc_lower = location.lower()
 
-    # Remote 여부
     is_remote = "remote" in loc_lower or "flexible" in loc_lower
 
-    # 밴쿠버 광역 도시 찾기
     found_city = None
     for city in VANCOUVER_METRO_CITIES:
         if city in loc_lower:
             found_city = city.title()
             break
 
-    # NAMER (North America Region) → Remote, Canada로 표시
     if "namer" in loc_lower:
         return "Remote, Canada (NAMER)"
 
@@ -177,23 +142,3 @@ def _format_days_ago(date_posted):
     except (ValueError, TypeError):
         pass
     return "Date not listed"
-
-
-def send_email(subject, html_body):
-    """Gmail API로 이메일 발송"""
-    service = get_gmail_service()
-
-    # HTML 이메일 메시지 생성
-    message = MIMEMultipart("alternative")
-    message["bcc"] = ", ".join(TO_EMAIL) if isinstance(TO_EMAIL, list) else TO_EMAIL
-    message["subject"] = subject
-
-    html_part = MIMEText(html_body, "html")
-    message.attach(html_part)
-
-    # Base64 인코딩 후 Gmail API로 발송
-    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-    service.users().messages().send(
-        userId="me",
-        body={"raw": raw},
-    ).execute()
