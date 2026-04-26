@@ -36,6 +36,8 @@ def main():
         return
 
     print(f"총 {len(jobs)}건의 공고 발견")
+    for i, job in enumerate(jobs, 1):
+        print(f"  {i}. [{job.get('date_posted','')}] {job['title']} | {job.get('company','')} | {job.get('location','')} | {job['url']}")
 
     # 이메일 본문 생성 및 발송
     subject = f"Caroline's Job Alert — {now_van.strftime('%Y-%m-%d')}"
