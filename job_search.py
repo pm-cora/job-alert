@@ -464,6 +464,12 @@ def _extract_company_from_url(url):
             if "company" in parts and len(parts) > parts.index("company") + 1:
                 company = parts[parts.index("company") + 1].split("?")[0]
                 return company.replace("-", " ").title()
+
+        # Workday: 회사명.wd{N}.myworkdayjobs.com
+        if "myworkdayjobs.com" in domain:
+            m = re.match(r"([^.]+)\.wd\d+\.myworkdayjobs\.com", domain)
+            if m:
+                return m.group(1).replace("-", " ").title()
     except Exception:
         pass
 
