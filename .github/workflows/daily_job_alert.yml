@@ -23,6 +23,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Load config from Gist
+        run: |
+          curl -s -H "Authorization: Bearer ${{ secrets.GIST_TOKEN }}" \
+            "https://api.github.com/gists/${{ secrets.CONFIG_GIST_ID }}" | \
+            python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+content = data['files']['config.json']['content']
+with open('config.json', 'w') as f:
+    f.write(content)
+print('Config loaded:', content[:80])
+"
+
       - name: Run job alert
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
