@@ -106,6 +106,21 @@
     }
     .remove-btn:hover { color: #e74c3c; }
 
+    .chip-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; min-height: 10px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 10px; border-radius: 20px;
+      font-size: 13px; font-weight: 500;
+    }
+    .chip-title { background: #eaf0fb; color: #2c5aa0; }
+    .chip-content { background: #eafaf1; color: #1a7a45; }
+    .chip-remove {
+      background: none; border: none; cursor: pointer;
+      font-size: 15px; line-height: 1; padding: 0;
+      color: inherit; opacity: 0.5; transition: opacity 0.15s;
+    }
+    .chip-remove:hover { opacity: 1; }
+
     .add-row { display: flex; gap: 8px; }
     .add-row input {
       flex: 1; padding: 10px 13px;
@@ -221,6 +236,26 @@
       </div>
     </div>
 
+    <div class="section">
+      <div class="section-label">직무 키워드 <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#bbb;font-size:11px;">검색 및 필터에 사용</span></div>
+      <div class="chip-list" id="title-keyword-list"></div>
+      <div class="add-row">
+        <input type="text" id="new-title-keyword" placeholder="예: product designer"
+          onkeydown="if(event.key==='Enter') addKeyword('title')">
+        <button class="btn-add" onclick="addKeyword('title')">추가</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-label">태그 키워드 <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#bbb;font-size:11px;">공고 본문에서 감지 시 태그 표시</span></div>
+      <div class="chip-list" id="content-keyword-list"></div>
+      <div class="add-row">
+        <input type="text" id="new-content-keyword" placeholder="예: Salesforce"
+          onkeydown="if(event.key==='Enter') addKeyword('content')">
+        <button class="btn-add" onclick="addKeyword('content')">추가</button>
+      </div>
+    </div>
+
     <button class="btn-save" id="save-btn" onclick="saveConfig()" disabled>저장</button>
     <div class="footer-link">
       <a onclick="resetPat()">GitHub 토큰 변경</a>
@@ -303,6 +338,8 @@
       document.getElementById('enabled-toggle').checked = enabled;
       updateStatusBadge(enabled);
       renderRecipients(config.recipients || []);
+      renderKeywords('title', config.title_keywords || []);
+      renderKeywords('content', config.content_keywords || []);
       document.getElementById('save-btn').disabled = true;
     }
 
@@ -351,6 +388,43 @@
       markDirty();
     }
 
+    /* ── keyword chips ── */
+    function renderKeywords(type, list) {
+      const container = document.getElementById(`${type}-keyword-list`);
+      container.innerHTML = '';
+      list.forEach((kw, i) => {
+        const chip = document.createElement('span');
+        chip.className = `chip chip-${type}`;
+        chip.innerHTML = `${escHtml(kw)}<button class="chip-remove" onclick="removeKeyword('${type}',${i})" title="삭제">×</button>`;
+        container.appendChild(chip);
+      });
+    }
+
+    function getKeywords(type) {
+      return Array.from(document.querySelectorAll(`#${type}-keyword-list .chip`))
+        .map(el => el.childNodes[0].textContent.trim());
+    }
+
+    function addKeyword(type) {
+      const input = document.getElementById(`new-${type}-keyword`);
+      const value = input.value.trim();
+      if (!value) return;
+      const list = getKeywords(type);
+      if (list.map(k => k.toLowerCase()).includes(value.toLowerCase())) {
+        showToast('이미 있는 키워드입니다.', 'error'); return;
+      }
+      renderKeywords(type, [...list, value]);
+      input.value = '';
+      markDirty();
+    }
+
+    function removeKeyword(type, index) {
+      const list = getKeywords(type);
+      list.splice(index, 1);
+      renderKeywords(type, list);
+      markDirty();
+    }
+
     async function saveConfig() {
       const btn = document.getElementById('save-btn');
       btn.disabled = true;
@@ -359,6 +433,8 @@
       const config = {
         enabled: document.getElementById('enabled-toggle').checked,
         recipients: getRecipients(),
+        title_keywords: getKeywords('title'),
+        content_keywords: getKeywords('content'),
       };
 
       try {

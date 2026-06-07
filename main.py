@@ -28,11 +28,11 @@ CONFIG_FILE = Path(__file__).parent / "config.json"
 
 def _load_config():
     if not CONFIG_FILE.exists():
-        return {"enabled": True, "recipients": []}
+        return {"enabled": True, "recipients": [], "title_keywords": [], "content_keywords": []}
     try:
         return json.loads(CONFIG_FILE.read_text())
     except Exception:
-        return {"enabled": True, "recipients": []}
+        return {"enabled": True, "recipients": [], "title_keywords": [], "content_keywords": []}
 
 
 def _load_seen_urls():
@@ -72,7 +72,12 @@ def main():
     seen_map = _load_seen_urls()
     seen_urls = set(seen_map.keys())
 
-    jobs = search_all_jobs()
+    title_keywords = config.get("title_keywords") or []
+    content_keywords = config.get("content_keywords") or []
+    jobs = search_all_jobs(
+        title_keywords=title_keywords or None,
+        content_keywords=content_keywords or None,
+    )
 
     if not jobs:
         print("검색된 공고가 없습니다.")

@@ -14,7 +14,15 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 
-KEYWORDS = ["CRM", "FinTech"]
+DEFAULT_TITLE_KEYWORDS = [
+    "product manager", "program manager", "project manager",
+    "product lead", "product operations",
+]
+DEFAULT_CONTENT_KEYWORDS = ["CRM", "FinTech"]
+
+# 런타임에 main.py에서 config로 덮어씀
+_title_keywords = DEFAULT_TITLE_KEYWORDS
+_content_keywords = DEFAULT_CONTENT_KEYWORDS
 
 # Apify LinkedIn 검색 설정 (APIFY_TOKEN이 없으면 LinkedIn 검색 건너뜀)
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
@@ -30,14 +38,19 @@ HEADERS = {
 }
 
 
-def search_all_jobs():
+def search_all_jobs(title_keywords=None, content_keywords=None):
     """
-    Google Custom Search API + LinkedIn(Apify)로 Product Manager 공고 검색
+    Google Custom Search API + LinkedIn(Apify)로 공고 검색
     1. Google CSE로 ATS 도메인 검색
     2. 리스트 페이지, 관련 없는 공고 필터링
     3. ATS API 우선으로 상세 정보 추출
     4. LinkedIn 검색 결과 병합 (APIFY_TOKEN 있을 때만)
     """
+    global _title_keywords, _content_keywords
+    if title_keywords:
+        _title_keywords = [kw.lower() for kw in title_keywords]
+    if content_keywords:
+        _content_keywords = content_keywords
     raw_results = _fetch_search_results()
     filtered = _filter_results(raw_results)
     jobs = _enrich_with_details(filtered)
@@ -67,19 +80,8 @@ def _fetch_search_results():
     all_items = []
     seen_urls = set()
 
-    # 5가지 직무를 각각 정확한 구문으로 검색
-    queries = [
-        '"product manager" vancouver',
-        '"program manager" vancouver',
-        '"project manager" vancouver',
-        '"product lead" vancouver',
-        '"product operations" vancouver',
-        '"product manager" remote canada',
-        '"program manager" remote canada',
-        '"project manager" remote canada',
-        '"product lead" remote canada',
-        '"product operations" remote canada',
-    ]
+    locations = ["vancouver", "remote canada"]
+    queries = [f'"{kw}" {loc}' for kw in _title_keywords for loc in locations]
 
     print("  Google Custom Search API로 검색 중...")
 
@@ -226,16 +228,9 @@ def _is_list_page(url, title, snippet):
 
 
 def _is_pm_related(title):
-    """Product/Program/Project Manager 관련 직무인지 확인"""
+    """설정된 직무 키워드 중 하나라도 제목에 포함되면 True"""
     title_lower = title.lower()
-    pm_keywords = [
-        "product manager", "product management",
-        "program manager", "program management",
-        "project manager", "project management",
-        "product lead",
-        "product operations",
-    ]
-    return any(kw in title_lower for kw in pm_keywords)
+    return any(kw in title_lower for kw in _title_keywords)
 
 
 def _enrich_with_details(items):
@@ -288,7 +283,7 @@ def _enrich_with_details(items):
                 for key in ["title", "company", "location", "employment_type", "date_posted"]:
                     if details.get(key) and not job[key]:
                         job[key] = details[key]
-                job["keywords"] = [kw for kw in KEYWORDS if kw.lower() in page_text.lower()]
+                job["keywords"] = [kw for kw in _content_keywords if kw.lower() in page_text.lower()]
 
         # 게시일 기준 필터링: 7일 이내만 (날짜 정보 없으면 유지)
         if not _passes_date_filter(job["date_posted"]):
