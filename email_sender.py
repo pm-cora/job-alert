@@ -13,21 +13,19 @@ from zoneinfo import ZoneInfo
 SMTP_USER = os.environ.get("GMAIL_USER", "")
 SMTP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 
-TO_EMAIL = ["REDACTED", "REDACTED"]
 
-
-def send_email(subject, html_body):
+def send_email(subject, html_body, recipients):
     """Gmail SMTP로 이메일 발송"""
     message = MIMEMultipart("alternative")
     message["From"] = SMTP_USER
-    message["Bcc"] = ", ".join(TO_EMAIL)
+    message["Bcc"] = ", ".join(recipients)
     message["Subject"] = subject
 
     message.attach(MIMEText(html_body, "html"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(SMTP_USER, TO_EMAIL, message.as_string())
+        server.sendmail(SMTP_USER, recipients, message.as_string())
 
 
 def build_email_body(jobs, seen_urls=None):

@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Alert Settings</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 14px;
+      box-shadow: 0 2px 20px rgba(0,0,0,0.09);
+      padding: 36px 32px;
+      width: 100%;
+      max-width: 460px;
+    }
+
+    h1 { font-size: 21px; font-weight: 700; color: #111; margin-bottom: 4px; }
+
+    .status-line {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-active { background: #2ecc71; }
+    .dot-paused { background: #e67e22; }
+
+    .section { margin-bottom: 28px; }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #aaa;
+      margin-bottom: 10px;
+    }
+
+    /* Toggle row */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      background: #f7f8fa;
+      border-radius: 10px;
+    }
+
+    .toggle-text { font-size: 15px; color: #222; }
+    .toggle-sub { font-size: 12px; color: #aaa; margin-top: 2px; }
+
+    .switch { position: relative; width: 50px; height: 28px; flex-shrink: 0; }
+    .switch input { display: none; }
+    .slider {
+      position: absolute; inset: 0;
+      background: #d0d0d0;
+      border-radius: 28px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .slider::before {
+      content: '';
+      position: absolute;
+      width: 22px; height: 22px;
+      left: 3px; top: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    }
+    input:checked + .slider { background: #3498db; }
+    input:checked + .slider::before { transform: translateX(22px); }
+
+    /* Recipients */
+    .recipient-list { list-style: none; margin-bottom: 10px; }
+
+    .recipient-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      margin-bottom: 7px;
+      background: #fafafa;
+    }
+
+    .recipient-email { font-size: 14px; color: #333; word-break: break-all; }
+
+    .remove-btn {
+      background: none;
+      border: none;
+      color: #ccc;
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+      padding: 0 2px;
+      margin-left: 10px;
+      flex-shrink: 0;
+      transition: color 0.15s;
+    }
+    .remove-btn:hover { color: #e74c3c; }
+
+    .add-row { display: flex; gap: 8px; }
+
+    .add-row input {
+      flex: 1;
+      padding: 10px 13px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .add-row input:focus { border-color: #3498db; }
+
+    .btn-add {
+      padding: 10px 18px;
+      background: #3498db;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .btn-add:hover { background: #2980b9; }
+
+    /* Save button */
+    .btn-save {
+      width: 100%;
+      padding: 13px;
+      background: #2ecc71;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn-save:hover:not(:disabled) { background: #27ae60; }
+    .btn-save:disabled { background: #d0d0d0; cursor: default; }
+
+    .footer-link {
+      text-align: center;
+      margin-top: 14px;
+      font-size: 12px;
+      color: #bbb;
+    }
+    .footer-link a { color: #3498db; cursor: pointer; text-decoration: none; }
+    .footer-link a:hover { text-decoration: underline; }
+
+    /* PAT screen */
+    .pat-description { font-size: 14px; color: #666; margin-bottom: 20px; line-height: 1.6; }
+
+    .pat-input {
+      width: 100%;
+      padding: 11px 13px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: monospace;
+      outline: none;
+      margin-bottom: 10px;
+      transition: border-color 0.15s;
+    }
+    .pat-input:focus { border-color: #3498db; }
+
+    .btn-primary {
+      width: 100%;
+      padding: 12px;
+      background: #3498db;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #2980b9; }
+
+    .pat-hint {
+      margin-top: 14px;
+      font-size: 12px;
+      color: #bbb;
+      line-height: 1.6;
+    }
+    .pat-hint a { color: #3498db; text-decoration: none; }
+    .pat-hint a:hover { text-decoration: underline; }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(10px);
+      background: #2c3e50;
+      color: white;
+      padding: 10px 22px;
+      border-radius: 8px;
+      font-size: 14px;
+      opacity: 0;
+      transition: opacity 0.25s, transform 0.25s;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .toast.error { background: #e74c3c; }
+    .toast.success { background: #27ae60; }
+
+    #pat-screen { display: none; }
+    #main-screen { display: none; }
+  </style>
+</head>
+<body>
+
+  <!-- PAT setup screen -->
+  <div class="card" id="pat-screen">
+    <h1>Job Alert Settings</h1>
+    <p class="pat-description" style="margin-top:8px;">
+      GitHub Personal Access Token이 필요합니다.<br>
+      설정을 읽고 저장하는 데만 사용되며, 브라우저에만 저장됩니다.
+    </p>
+    <input
+      class="pat-input"
+      type="password"
+      id="pat-input"
+      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+      autocomplete="off"
+    >
+    <button class="btn-primary" onclick="savePat()">시작하기</button>
+    <p class="pat-hint">
+      <code>repo</code> 권한이 필요합니다.
+      <a href="https://github.com/settings/tokens/new?description=job-alert-settings&scopes=repo" target="_blank">토큰 발급 바로가기</a>
+    </p>
+  </div>
+
+  <!-- Main settings screen -->
+  <div class="card" id="main-screen">
+    <h1>Caroline's Job Alert</h1>
+    <div class="status-line" id="status-line">
+      <span class="dot dot-active" id="status-dot"></span>
+      <span id="status-text">불러오는 중...</span>
+    </div>
+
+    <div class="section">
+      <div class="section-label">알림 상태</div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-text">매일 알림 발송</div>
+          <div class="toggle-sub">매일 오전 8시 Vancouver 기준</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="enabled-toggle" onchange="markDirty()">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-label">수신자</div>
+      <ul class="recipient-list" id="recipient-list"></ul>
+      <div class="add-row">
+        <input
+          type="email"
+          id="new-email"
+          placeholder="이메일 추가"
+          onkeydown="if(event.key==='Enter') addRecipient()"
+        >
+        <button class="btn-add" onclick="addRecipient()">추가</button>
+      </div>
+    </div>
+
+    <button class="btn-save" id="save-btn" onclick="saveConfig()" disabled>저장</button>
+    <div class="footer-link">
+      <a onclick="resetPat()">GitHub 토큰 변경</a>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const REPO  = 'pm-cora/job-alert';
+    const FILE  = 'config.json';
+    const API   = `https://api.github.com/repos/${REPO}/contents/${FILE}`;
+
+    let fileSha = null;
+
+    /* ── localStorage helpers ── */
+    const getToken = () => localStorage.getItem('gh_pat') || '';
+    const setToken = (t) => localStorage.setItem('gh_pat', t);
+
+    /* ── screen toggle ── */
+    function showScreen(name) {
+      document.getElementById('pat-screen').style.display  = name === 'pat'  ? 'block' : 'none';
+      document.getElementById('main-screen').style.display = name === 'main' ? 'block' : 'none';
+    }
+
+    /* ── toast ── */
+    function showToast(msg, type = '') {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = `toast show ${type}`;
+      setTimeout(() => el.className = 'toast', 2800);
+    }
+
+    /* ── dirty state ── */
+    function markDirty() {
+      document.getElementById('save-btn').disabled = false;
+    }
+
+    /* ── base64 helpers (handles unicode) ── */
+    function toBase64(str) {
+      return btoa(unescape(encodeURIComponent(str)));
+    }
+    function fromBase64(b64) {
+      return decodeURIComponent(escape(atob(b64.replace(/\n/g, ''))));
+    }
+
+    /* ── load config from GitHub ── */
+    async function loadConfig() {
+      document.getElementById('status-text').textContent = '불러오는 중...';
+      try {
+        const res = await fetch(API, {
+          headers: {
+            Authorization: `Bearer ${getToken()}`,
+            Accept: 'application/vnd.github+json',
+          },
+        });
+
+        if (res.status === 401) { resetPat(); return; }
+
+        let config;
+        if (res.status === 404) {
+          config = { enabled: true, recipients: [] };
+          fileSha = null;
+        } else {
+          const data = await res.json();
+          fileSha = data.sha;
+          config = JSON.parse(fromBase64(data.content));
+        }
+
+        renderConfig(config);
+      } catch (e) {
+        showToast('설정을 불러오지 못했습니다.', 'error');
+      }
+    }
+
+    function renderConfig(config) {
+      const enabled = config.enabled !== false;
+      document.getElementById('enabled-toggle').checked = enabled;
+      updateStatusBadge(enabled);
+      renderRecipients(config.recipients || []);
+      document.getElementById('save-btn').disabled = true;
+    }
+
+    function updateStatusBadge(enabled) {
+      const dot  = document.getElementById('status-dot');
+      const text = document.getElementById('status-text');
+      if (enabled) {
+        dot.className  = 'dot dot-active';
+        text.textContent = '활성화';
+      } else {
+        dot.className  = 'dot dot-paused';
+        text.textContent = '중단됨';
+      }
+    }
+
+    /* ── recipients ── */
+    function renderRecipients(list) {
+      const ul = document.getElementById('recipient-list');
+      ul.innerHTML = '';
+      list.forEach((email, i) => {
+        const li = document.createElement('li');
+        li.className = 'recipient-item';
+        li.innerHTML = `
+          <span class="recipient-email">${escHtml(email)}</span>
+          <button class="remove-btn" onclick="removeRecipient(${i})" title="삭제">×</button>
+        `;
+        ul.appendChild(li);
+      });
+    }
+
+    function getRecipients() {
+      return Array.from(document.querySelectorAll('.recipient-email')).map(el => el.textContent);
+    }
+
+    function addRecipient() {
+      const input = document.getElementById('new-email');
+      const email = input.value.trim();
+      if (!email || !email.includes('@')) {
+        showToast('올바른 이메일 주소를 입력하세요.', 'error');
+        return;
+      }
+      const list = getRecipients();
+      if (list.includes(email)) {
+        showToast('이미 추가된 이메일입니다.', 'error');
+        return;
+      }
+      list.push(email);
+      renderRecipients(list);
+      input.value = '';
+      markDirty();
+    }
+
+    function removeRecipient(index) {
+      const list = getRecipients();
+      list.splice(index, 1);
+      renderRecipients(list);
+      markDirty();
+    }
+
+    /* ── save config to GitHub ── */
+    async function saveConfig() {
+      const btn = document.getElementById('save-btn');
+      btn.disabled = true;
+      btn.textContent = '저장 중...';
+
+      const enabled    = document.getElementById('enabled-toggle').checked;
+      const recipients = getRecipients();
+      const config     = { enabled, recipients };
+
+      const body = {
+        message: `settings: ${enabled ? 'enable' : 'disable'} alerts, ${recipients.length} recipients`,
+        content: toBase64(JSON.stringify(config, null, 2) + '\n'),
+      };
+      if (fileSha) body.sha = fileSha;
+
+      try {
+        const res = await fetch(API, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${getToken()}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/vnd.github+json',
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message || res.statusText);
+        }
+
+        const data = await res.json();
+        fileSha = data.content.sha;
+        updateStatusBadge(enabled);
+        showToast('저장되었습니다.', 'success');
+      } catch (e) {
+        showToast(`저장 실패: ${e.message}`, 'error');
+        btn.disabled = false;
+      }
+
+      btn.textContent = '저장';
+    }
+
+    /* ── PAT flow ── */
+    function savePat() {
+      const token = document.getElementById('pat-input').value.trim();
+      if (!token) return;
+      setToken(token);
+      showScreen('main');
+      loadConfig();
+    }
+
+    function resetPat() {
+      localStorage.removeItem('gh_pat');
+      document.getElementById('pat-input').value = '';
+      showScreen('pat');
+    }
+
+    /* ── utility ── */
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /* ── init ── */
+    document.getElementById('pat-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') savePat();
+    });
+
+    if (getToken()) {
+      showScreen('main');
+      loadConfig();
+    } else {
+      showScreen('pat');
+    }
+  </script>
+</body>
+</html>

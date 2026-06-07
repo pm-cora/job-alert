@@ -24,6 +24,18 @@ from job_search import search_all_jobs
 from email_sender import send_email, build_email_body
 
 SEEN_JOBS_FILE = Path(__file__).parent / "seen_jobs.json"
+CONFIG_FILE = Path(__file__).parent / "config.json"
+
+DEFAULT_RECIPIENTS = ["REDACTED", "REDACTED"]
+
+
+def _load_config():
+    if not CONFIG_FILE.exists():
+        return {"enabled": True, "recipients": DEFAULT_RECIPIENTS}
+    try:
+        return json.loads(CONFIG_FILE.read_text())
+    except Exception:
+        return {"enabled": True, "recipients": DEFAULT_RECIPIENTS}
 
 
 def _load_seen_urls():
@@ -46,8 +58,16 @@ def _save_seen_urls(jobs, prev_seen):
 
 
 def main():
+    config = _load_config()
+    if not config.get("enabled", True):
+        print("알림 비활성화 상태입니다. (config.json enabled=false)")
+        return
+
+    recipients = config.get("recipients") or DEFAULT_RECIPIENTS
+
     now_van = datetime.now(ZoneInfo("America/Vancouver"))
     print(f"검색 시작... ({now_van.strftime('%Y-%m-%d %H:%M')} Vancouver time)")
+    print(f"수신자: {', '.join(recipients)}")
 
     seen_map = _load_seen_urls()
     seen_urls = set(seen_map.keys())
@@ -65,7 +85,7 @@ def main():
 
     subject = f"Caroline's Job Alert — {now_van.strftime('%Y-%m-%d')}"
     body = build_email_body(jobs, seen_urls)
-    send_email(subject, body)
+    send_email(subject, body, recipients)
 
     _save_seen_urls(jobs, seen_map)
     print("이메일 발송 완료!")
