@@ -26,16 +26,13 @@ from email_sender import send_email, build_email_body
 SEEN_JOBS_FILE = Path(__file__).parent / "seen_jobs.json"
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
-DEFAULT_RECIPIENTS = ["REDACTED", "REDACTED"]
-
-
 def _load_config():
     if not CONFIG_FILE.exists():
-        return {"enabled": True, "recipients": DEFAULT_RECIPIENTS}
+        return {"enabled": True, "recipients": []}
     try:
         return json.loads(CONFIG_FILE.read_text())
     except Exception:
-        return {"enabled": True, "recipients": DEFAULT_RECIPIENTS}
+        return {"enabled": True, "recipients": []}
 
 
 def _load_seen_urls():
@@ -63,7 +60,10 @@ def main():
         print("알림 비활성화 상태입니다. (config.json enabled=false)")
         return
 
-    recipients = config.get("recipients") or DEFAULT_RECIPIENTS
+    recipients = config.get("recipients") or []
+    if not recipients:
+        print("수신자가 없습니다. Gist에서 recipients를 설정하세요.")
+        return
 
     now_van = datetime.now(ZoneInfo("America/Vancouver"))
     print(f"검색 시작... ({now_van.strftime('%Y-%m-%d %H:%M')} Vancouver time)")
